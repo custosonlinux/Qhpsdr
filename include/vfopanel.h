@@ -33,8 +33,11 @@ public:
     void setRxMode(RxMode mode);
     RxMode rxMode() const { return m_mode; }
 
-    // level: 0.0-1.0, drives the (uncalibrated) signal meter.
-    void setSignalLevel(double level);
+    // WDSP's own S-meter reading in dBm (RxAudioChannel::meterUpdated()).
+    // Converted to S-units the same way as deskHPSDR's meter.c: S9 =
+    // -73dBm (HF convention; this project doesn't have a >30MHz-aware
+    // path yet), 6dB/S-unit below S9, direct dB-over-S9 above it.
+    void setSignalDbm(double dbm);
 
     void setConnected(bool connected);
 

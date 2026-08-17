@@ -30,8 +30,6 @@ private slots:
 private:
     // Runs on m_workerThread (writes to QAudioSink, which can block).
     void playAudioBlock(const QVector<float> &interleavedStereo);
-    // Runs on the GUI thread (touches the VfoPanel meter widget).
-    void updateSignalMeter(const QVector<float> &interleavedStereo);
     void repaintDisplays();
 
     // OldProtocolConnection + RxAudioChannel (network I/O and WDSP audio

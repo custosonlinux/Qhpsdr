@@ -72,6 +72,10 @@ public:
 signals:
     // Interleaved stereo (L, R, L, R, ...), normalized to roughly [-1, 1].
     void audioBlockReady(QVector<float> interleavedStereo);
+    // WDSP's own S-meter reading (RXA_S_AV, dBm), emitted once per
+    // processed block alongside audioBlockReady - see
+    // core/deskhpsdr-src/receiver.c's rx_get_smeter().
+    void meterUpdated(double dbm);
     // Fired once open() has finished and feedSample()/audioBlockReady()
     // are live. Never fires if close() is called before it completes.
     void opened();

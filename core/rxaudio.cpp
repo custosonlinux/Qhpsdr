@@ -158,4 +158,12 @@ void RxAudioChannel::processBlock() {
         out[int(i)] = float(m_outBuffer[i]);
     }
     emit audioBlockReady(out);
+
+    // 1 = RXA_S_AV (core/wdsp-2.00/RXA.h's `enum rxaMeterType`; not
+    // included directly to avoid pulling WDSP's internal comm.h world
+    // into this translation unit, same reasoning as the RxMode enum at
+    // the top of rxaudio.h). Already in dBm - see
+    // core/deskhpsdr-src/receiver.c's rx_get_smeter().
+    constexpr int kRxaSAv = 1;
+    emit meterUpdated(GetRXAMeter(m_channel, kRxaSAv));
 }

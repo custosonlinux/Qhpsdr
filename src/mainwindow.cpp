@@ -221,7 +221,8 @@ void MainWindow::showDiscoveryDialog() {
     // blocking QAudioSink::write() call would have been.
     connect(m_rxAudio, &RxAudioChannel::audioBlockReady, m_rxAudio,
             [this](const QVector<float> &block) { playAudioBlock(block); });
-    connect(m_rxAudio, &RxAudioChannel::audioBlockReady, this, &MainWindow::updateSignalMeter);
+    connect(m_rxAudio, &RxAudioChannel::meterUpdated, this,
+            [this](double dbm) { m_vfoPanel->setSignalDbm(dbm); });
     QMetaObject::invokeMethod(
         m_rxAudio,
         [this]() {
@@ -282,20 +283,6 @@ void MainWindow::playAudioBlock(const QVector<float> &interleavedStereo) {
                           interleavedStereo.size() * qint64(sizeof(float)));
 }
 
-void MainWindow::updateSignalMeter(const QVector<float> &interleavedStereo) {
-    if (interleavedStereo.isEmpty()) {
-        return;
-    }
-    double sumSq = 0.0;
-    for (float v : interleavedStereo) {
-        sumSq += double(v) * double(v);
-    }
-    // Crude, uncalibrated level - just enough to show the meter moving
-    // with the actual received signal.
-    const double rms = std::sqrt(sumSq / interleavedStereo.size());
-    m_vfoPanel->setSignalLevel(rms / 4.0);
-}
-
 void MainWindow::disconnectFromRadio() {
     if (m_connection) {
         // Both calls run on the worker thread that owns these objects
@@ -337,7 +324,7 @@ void MainWindow::disconnectFromRadio() {
         m_audioDevice = nullptr;
     }
     m_vfoPanel->setConnected(false);
-    m_vfoPanel->setSignalLevel(0.0);
+    m_vfoPanel->setSignalDbm(-140.0);
     m_disconnectAction->setEnabled(false);
     statusBar()->showMessage(tr("Disconnected."));
 }

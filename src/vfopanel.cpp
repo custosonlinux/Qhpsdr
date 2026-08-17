@@ -117,14 +117,19 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     m_meterLabel = new QLabel(tr("Signal"), this);
     m_meterLabel->setStyleSheet(kDarkLabelStyle);
     m_meter = new QProgressBar(this);
-    m_meter->setRange(0, 100);
-    m_meter->setValue(0);
-    m_meter->setTextVisible(false);
+    // Range in tenths of a dB, from S0 (-127 dBm) to S9+60 (-13 dBm) - see
+    // setSignalDbm(). QProgressBar only does integer steps, hence tenths
+    // rather than dBm directly, for smoother-looking movement.
+    m_meter->setRange(-1270, -130);
+    m_meter->setValue(-1270);
+    m_meter->setTextVisible(true);
+    m_meter->setFormat(tr("no signal"));
+    m_meter->setAlignment(Qt::AlignCenter);
     m_meter->setStyleSheet(
-        "QProgressBar { background: #10161c; border: 1px solid #33424c; border-radius: 3px; }"
+        "QProgressBar { background: #10161c; border: 1px solid #33424c; border-radius: 3px; color: #d8e6ea; }"
         "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
         "  stop:0 #2f8f3a, stop:0.7 #d8c22a, stop:1 #c23b2a); border-radius: 3px; }");
-    m_meter->setToolTip(tr("Approximate signal level (uncalibrated - not yet an S-meter in dB)"));
+    m_meter->setToolTip(tr("S-meter (WDSP's RXA_S_AV, HF S9 = -73dBm convention)"));
 
     auto *modeLabel = new QLabel(tr("Mode"), this);
     modeLabel->setStyleSheet(kDarkLabelStyle);
@@ -188,8 +193,19 @@ void VfoPanel::repopulateFilterCombo() {
     }
 }
 
-void VfoPanel::setSignalLevel(double level) {
-    m_meter->setValue(int(qBound(0.0, level, 1.0) * 100));
+void VfoPanel::setSignalDbm(double dbm) {
+    // core/deskhpsdr-src/meter.c: S9 = -73dBm (HF), 6dB per S-unit below
+    // S9, direct dB-over-S9 above it (e.g. "S9+20").
+    constexpr double kS9Dbm = -73.0;
+    QString text;
+    if (dbm <= kS9Dbm) {
+        const double sUnits = qMax(0.0, 9.0 + (dbm - kS9Dbm) / 6.0);
+        text = QStringLiteral("S%1").arg(int(sUnits));
+    } else {
+        text = QStringLiteral("S9+%1").arg(int(dbm - kS9Dbm));
+    }
+    m_meter->setFormat(text + tr("  (%1 dBm)").arg(int(dbm)));
+    m_meter->setValue(int(qBound(-1270.0, dbm * 10.0, -130.0)));
 }
 
 void VfoPanel::setConnected(bool connected) {
