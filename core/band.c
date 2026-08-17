@@ -893,10 +893,10 @@ void PaCalibrationSave(void) {
           filename);
 }
 
-gboolean PaCalibrationLoad(const char *filename) {
+int PaCalibrationLoad(const char *filename) {
   int device_from_import = -1;
   if (filename == NULL || access(filename, F_OK) != 0) {
-    return FALSE;
+    return 0;
   }
   clearProperties();
   loadProperties(filename);
@@ -910,7 +910,7 @@ gboolean PaCalibrationLoad(const char *filename) {
             device_from_import,
             device);
     clearProperties();
-    return FALSE;
+    return 0;
   } else {
     t_print("%s: valid pa_calibration file, loading...\n",
             __func__,
@@ -934,5 +934,5 @@ gboolean PaCalibrationLoad(const char *filename) {
   t_print("%s: loaded %s\n",
           __func__,
           filename);
-  return TRUE;
+  return 1;
 }

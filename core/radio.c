@@ -19,7 +19,7 @@
 *
 */
 
-#include <gtk/gtk.h>
+//#include <gtk/gtk.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -148,7 +148,7 @@ int sat_mode;
 int region = REGION_VFO;
 
 DISCOVERED *radio = NULL;
-gboolean radio_is_remote = FALSE;     // only used with CLIENT_SERVER
+int radio_is_remote = 0;     // only used with CLIENT_SERVER
 
 static char property_path[128];
 static char property_path_bak[256];
@@ -320,7 +320,7 @@ int set_locked(int state) {
     return 0;
   }
   locked = state;
-  g_idle_add(ext_vfo_update, NULL);
+  //g_idle_add(ext_vfo_update, NULL);
   if (!tci_is_applying()) {
     tci_lock_changed();
   }
@@ -453,14 +453,14 @@ double *capture_data = NULL;
 int can_transmit = 0;
 int optimize_for_touchscreen = 0;
 
-gboolean duplex = FALSE;
-gboolean mute_rx_while_transmitting = TRUE;
+int duplex = 0;
+int mute_rx_while_transmitting = 1;
 
 double drive_max = 100.0;
 double drive_digi_max = 100.0; // maximum drive in DIGU/DIGL
 
-gboolean display_warnings = TRUE;
-gboolean display_pacurr = TRUE;
+int display_warnings = 1;
+int display_pacurr = 1;
 
 gint window_x_pos = 0;
 gint window_y_pos = 0;
@@ -485,9 +485,9 @@ static SaturnSerialPort SaturnSerialPortsList[] = {
 };
 
 #if defined (__AUTOG__)
-static gboolean launch_autogain_hl2_wrapper (gpointer data) {
+static int launch_autogain_hl2_wrapper (gpointer data) {
   launch_autogain_hl2();
-  return FALSE;
+  return 0;
 }
 #endif
 
@@ -658,7 +658,7 @@ static int set_full_screen(gpointer data) {
 }
 */
 
-static gboolean destroy_cb (gpointer data) {
+static int destroy_cb (gpointer data) {
   GtkWidget *w = GTK_WIDGET (data);
   if (GTK_IS_WIDGET (w)) {
     gtk_widget_destroy (w);
@@ -683,7 +683,7 @@ void destroy_widget_safe (GtkWidget **pwidget) {
     }
   } else {
     // Worker-Thread: nur schedulen, GTK nur im Callback anfassen
-    g_idle_add_full (
+    //g_idle_add_full (
             G_PRIORITY_HIGH_IDLE,
             destroy_cb,
             g_object_ref (w),  // Schutz bis zum Callback
@@ -744,7 +744,7 @@ void radio_reconfigure_screen (void) {
     // For some reason, moving the window immediately does not work
     // on MacOS, therefore do this after waiting a second
     //
-    full_screen_timeout = g_timeout_add (1000, set_full_screen, GINT_TO_POINTER (0));
+    full_screen_timeout = //g_timeout_add (1000, set_full_screen, GINT_TO_POINTER (0));
   }
   if (last_fullscreen != my_fullscreen && my_fullscreen) {
     if (!use_wayland) {
@@ -793,10 +793,10 @@ void radio_reconfigure_screen (void) {
       // For some reason, going to full-screen immediately does not
       // work on MacOS, so do this after 1 second
       //
-      full_screen_timeout = g_timeout_add (1000, set_full_screen, GINT_TO_POINTER (1));
+      full_screen_timeout = //g_timeout_add (1000, set_full_screen, GINT_TO_POINTER (1));
     }
   }
-  g_idle_add (ext_vfo_update, NULL);
+  //g_idle_add (ext_vfo_update, NULL);
 }
 
 void radio_reconfigure (void) {
@@ -938,11 +938,11 @@ void radio_reconfigure (void) {
     int id = active_receiver->id;
     int mode = vfo[id].mode;
     if (mode == modeDIGL || mode == modeDIGU) {
-      update_slider_nr_btn(FALSE);
-      update_slider_snb_button(FALSE);
+      update_slider_nr_btn(0);
+      update_slider_snb_button(0);
     } else {
-      update_slider_nr_btn(TRUE);
-      update_slider_snb_button(TRUE);
+      update_slider_nr_btn(1);
+      update_slider_snb_button(1);
     }
     update_slider_binaural_btn();
   }
@@ -960,12 +960,12 @@ static int old_zoom = 0;
 static int old_tool = 0;
 static int old_slid = 0;
 
-static gboolean hideall_cb  (GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int hideall_cb  (GtkWidget *widget, GdkEventButton *event, gpointer data) {
   //
   // radio_reconfigure must not be called during TX
   //
   if (radio_is_transmitting()) {
-    if (!duplex) { return TRUE; }
+    if (!duplex) { return 1; }
   }
   if (hide_status == 0) {
     //
@@ -990,29 +990,29 @@ static gboolean hideall_cb  (GtkWidget *widget, GdkEventButton *event, gpointer 
     display_toolbar = old_tool;
     radio_reconfigure();
   }
-  return TRUE;
+  return 1;
 }
 
 // cppcheck-suppress constParameterCallback
-static gboolean menu_cb (GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int menu_cb (GtkWidget *widget, GdkEventButton *event, gpointer data) {
   new_menu();
-  return TRUE;
+  return 1;
 }
 
 // cppcheck-suppress constParameterCallback
-static gboolean exit_cb (GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int exit_cb (GtkWidget *widget, GdkEventButton *event, gpointer data) {
   stop_program();
   exit (EXIT_SUCCESS);
-  return TRUE;
+  return 1;
 }
 
-gboolean win_set_bgcolor (GtkWidget *widget, gpointer data) {
+int win_set_bgcolor (GtkWidget *widget, gpointer data) {
   const GdkRGBA *bgcolor = (const GdkRGBA *) data;
   gtk_widget_override_background_color (widget,
                                         GTK_STATE_FLAG_NORMAL,
                                         bgcolor);
   gtk_widget_queue_draw (widget);
-  return FALSE;
+  return 0;
 }
 
 /* Wrapper, damit wir 'clicked' nutzen können */
@@ -1086,7 +1086,7 @@ static void linux_open_webview_window_with_id (
     linux_dock_windows = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, NULL);
   }
-  // g_setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", TRUE);
+  // g_setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
   GtkWidget *window = g_hash_table_lookup (linux_dock_windows, id);
   if (window) {
     // Optional: Position nachziehen
@@ -1370,7 +1370,7 @@ static void show_message (GtkWindow *parent, const char *text) {
     NULL);
   gtk_message_dialog_set_markup (GTK_MESSAGE_DIALOG (dialog), text);
   gtk_window_set_title (GTK_WINDOW (dialog), "deskHPSDR Error Message");
-  gtk_window_set_deletable (GTK_WINDOW (dialog), FALSE);
+  gtk_window_set_deletable (GTK_WINDOW (dialog), 0);
   g_signal_connect (dialog, "response", G_CALLBACK (on_response), NULL);
   gtk_widget_show (dialog);
 }
@@ -1723,9 +1723,9 @@ void radio_start_radio (void) {
   adc[0].filters = AUTOMATIC;
   adc[0].hpf = HPF_13;
   adc[0].lpf = LPF_30_20;
-  adc[0].dither = FALSE;
-  adc[0].random = FALSE;
-  adc[0].preamp = FALSE;
+  adc[0].dither = 0;
+  adc[0].random = 0;
+  adc[0].preamp = 0;
   adc[0].attenuation = 0;
   adc[0].enable_step_attenuation = 0;
   adc[0].gain = rx_gain_calibration;
@@ -1742,14 +1742,14 @@ void radio_start_radio (void) {
     adc[0].min_gain = -12.0;
     adc[0].max_gain = +48.0;
   }
-  adc[0].agc = FALSE;
+  adc[0].agc = 0;
   adc[1].antenna = ANTENNA_1;
   adc[1].filters = AUTOMATIC;
   adc[1].hpf = HPF_9_5;
   adc[1].lpf = LPF_60_40;
-  adc[1].dither = FALSE;
-  adc[1].random = FALSE;
-  adc[1].preamp = FALSE;
+  adc[1].dither = 0;
+  adc[1].random = 0;
+  adc[1].preamp = 0;
   adc[1].attenuation = 0;
   adc[1].enable_step_attenuation = 0;
   adc[1].gain = rx_gain_calibration;
@@ -1761,7 +1761,7 @@ void radio_start_radio (void) {
     adc[1].min_gain = -12.0;
     adc[1].max_gain = +48.0;
   }
-  adc[1].agc = FALSE;
+  adc[1].agc = 0;
   display_zoompan = 1;
   display_sliders = 1;
   display_toolbar = 1;
@@ -1807,7 +1807,7 @@ void radio_start_radio (void) {
     if (pthread_equal (pthread_self(), deskhpsdr_main_thread)) {
       launch_autogain_hl2();
     } else {
-      g_idle_add ((GSourceFunc) launch_autogain_hl2_wrapper, NULL);
+      //g_idle_add ((GSourceFunc) launch_autogain_hl2_wrapper, NULL);
     }
   }
 #endif
@@ -1831,7 +1831,7 @@ void radio_start_radio (void) {
     }
   }
   schedule_high_priority();
-  g_idle_add (ext_vfo_update, NULL);
+  //g_idle_add (ext_vfo_update, NULL);
   {
     GdkWindow  *w = gtk_widget_get_window (top_window);
     GdkDisplay *d = gdk_window_get_display (w);
@@ -2091,7 +2091,7 @@ void radio_mox_update (int state) {
     tx_set_out_of_band (transmitter);
   }
   radio_set_mox (state);
-  g_idle_add (ext_vfo_update, NULL);
+  //g_idle_add (ext_vfo_update, NULL);
 }
 
 void radio_mox_update_immediate (int state) {
@@ -2101,7 +2101,7 @@ void radio_mox_update_immediate (int state) {
     tx_set_out_of_band (transmitter);
   }
   radio_set_mox_immediate (state);
-  g_idle_add (ext_vfo_update, NULL);
+  //g_idle_add (ext_vfo_update, NULL);
 }
 
 void radio_tune_update (int state) {
@@ -2113,7 +2113,7 @@ void radio_tune_update (int state) {
     tx_set_out_of_band (transmitter);
   }
   radio_set_tune (state);
-  g_idle_add (ext_vfo_update, NULL);
+  //g_idle_add (ext_vfo_update, NULL);
 }
 
 static int radio_mox_uses_speech_audio(void) {
@@ -2171,7 +2171,7 @@ static void radio_graceful_mox_off_complete(void) {
    * same protection.
    */
   radio_set_mox_now ((radio_ptt || serptt_cts) ? 1 : 0);
-  g_idle_add (ext_vfo_update, NULL);
+  //g_idle_add (ext_vfo_update, NULL);
 }
 
 void radio_set_mox (int state) {
@@ -2267,10 +2267,10 @@ void radio_set_tune (int state) {
       // set off if TUNEing, but restore later
       tx_set_compressor (transmitter);
       if (can_transmit && display_sliders) {
-        update_slider_bbcompr_scale (FALSE);
-        update_slider_bbcompr_button (FALSE);
-        update_slider_lev_scale (FALSE);
-        update_slider_lev_button (FALSE);
+        update_slider_bbcompr_scale (0);
+        update_slider_bbcompr_button (0);
+        update_slider_lev_scale (0);
+        update_slider_lev_button (0);
       }
       //
       // Keep previous state in transmitter data, so we just need
@@ -2375,15 +2375,15 @@ void radio_set_tune (int state) {
       int m = vfo[id].mode;
       if (can_transmit && display_sliders) {
         if (m == modeDIGU || m == modeDIGL) {
-          update_slider_bbcompr_scale (FALSE);
-          update_slider_bbcompr_button (FALSE);
-          update_slider_lev_scale (FALSE);
-          update_slider_lev_button (FALSE);
+          update_slider_bbcompr_scale (0);
+          update_slider_bbcompr_button (0);
+          update_slider_lev_scale (0);
+          update_slider_lev_button (0);
         } else {
-          update_slider_bbcompr_scale (TRUE);
-          update_slider_bbcompr_button (TRUE);
-          update_slider_lev_scale (TRUE);
-          update_slider_lev_button (TRUE);
+          update_slider_bbcompr_scale (1);
+          update_slider_bbcompr_button (1);
+          update_slider_lev_scale (1);
+          update_slider_lev_button (1);
         }
       }
       tune = state;
@@ -2660,7 +2660,7 @@ void radio_set_split (int val) {
       tci_split_changed();
       tci_tx_frequency_changed();
     }
-    g_idle_add (ext_vfo_update, NULL);
+    //g_idle_add (ext_vfo_update, NULL);
     update_slider_split_btn();
   }
 }
@@ -3266,14 +3266,14 @@ void radio_save_state (void) {
 ///////////////////////////////////////////////////////////////////////////////////////////
 
 // cppcheck-suppress constParameterCallback
-static gboolean eventbox_callback (GtkWidget *widget, GdkEvent *event, gpointer data) {
+static int eventbox_callback (GtkWidget *widget, GdkEvent *event, gpointer data) {
   //
   // data is the ComboBox that is contained in the EventBox
   //
   if (event->type == GDK_BUTTON_RELEASE) {
     gtk_combo_box_popup (GTK_COMBO_BOX (data));
   }
-  return TRUE;
+  return 1;
 }
 
 //
@@ -3289,7 +3289,7 @@ void my_combo_attach (GtkGrid *grid, GtkWidget *combo, int row, int col, int spa
     GtkWidget *eventbox = gtk_event_box_new();
     g_signal_connect (eventbox, "event",   G_CALLBACK (eventbox_callback),   combo);
     gtk_container_add (GTK_CONTAINER (eventbox), combo);
-    gtk_event_box_set_above_child (GTK_EVENT_BOX (eventbox), TRUE);
+    gtk_event_box_set_above_child (GTK_EVENT_BOX (eventbox), 1);
     gtk_grid_attach (GTK_GRID (grid), eventbox, row, col, spanrow, spancol);
   } else {
     gtk_grid_attach (GTK_GRID (grid), combo, row, col, spanrow, spancol);
@@ -3367,18 +3367,18 @@ static gpointer auto_tune_thread (gpointer data) {
   // but  it may stop tuning before.
   //
   int count = 0;
-  g_idle_add (ext_tune_update, GINT_TO_POINTER (1));
+  //g_idle_add (ext_tune_update, GINT_TO_POINTER (1));
   for (;;) {
     if (count >= 0) {
       count++;
     }
     usleep (50000);
     if (auto_tune_end) {
-      g_idle_add (ext_tune_update, GINT_TO_POINTER (0));
+      //g_idle_add (ext_tune_update, GINT_TO_POINTER (0));
       break;
     }
     if (count >= 200) {
-      g_idle_add (ext_tune_update, GINT_TO_POINTER (0));
+      //g_idle_add (ext_tune_update, GINT_TO_POINTER (0));
       count = -1;
     }
   }

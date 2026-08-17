@@ -19,7 +19,7 @@
 *
 */
 
-#include <gtk/gtk.h>
+//#include <gtk/gtk.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -1017,7 +1017,7 @@ void update_action_table(void) {
   }
 }
 
-static gboolean p2_diversity_brick3_mode_active(int xmit) {
+static int p2_diversity_brick3_mode_active(int xmit) {
   return diversity_enabled && !xmit &&
          diversity_brick3_mode &&
          protocol == NEW_PROTOCOL &&

@@ -21,7 +21,7 @@
 #ifndef _RECEIVER_H
 #define _RECEIVER_H
 
-#include <gtk/gtk.h>
+//#include <gtk/gtk.h>
 #include <time.h>
 #include <stdatomic.h>
 #ifdef ALSA
@@ -341,10 +341,10 @@ typedef struct _receiver {
 extern RECEIVER *rx_create_pure_signal_receiver (int id, int sample_rate, int pixels, int fps);
 extern RECEIVER *rx_create_receiver (int id, int pixels, int width, int height);
 
-extern gboolean rx_button_press_event (GtkWidget *widget, GdkEventButton *event, gpointer data);
-extern gboolean rx_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data);
-extern gboolean rx_motion_notify_event (GtkWidget *widget, GdkEventMotion *event, gpointer data);
-extern gboolean rx_scroll_event (GtkWidget *widget, const GdkEventScroll *event, gpointer data);
+extern int rx_button_press_event (GtkWidget *widget, GdkEventButton *event, gpointer data);
+extern int rx_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data);
+extern int rx_motion_notify_event (GtkWidget *widget, GdkEventMotion *event, gpointer data);
+extern int rx_scroll_event (GtkWidget *widget, const GdkEventScroll *event, gpointer data);
 
 extern void   rx_add_iq_samples (RECEIVER *rx, double i_sample, double q_sample);
 extern void   rx_add_div_iq_samples (RECEIVER *rx, double i0, double q0, double i1, double q1);

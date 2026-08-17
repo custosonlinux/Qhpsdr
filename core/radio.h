@@ -58,9 +58,9 @@ enum _pa_power_enum {
 #define TOGGLE(a) a = (a) ? 0 : 1
 
 extern DISCOVERED *radio;
-extern gboolean radio_is_remote;
+extern int radio_is_remote;
 
-extern GtkWidget *fixed;
+//extern GtkWidget *fixed;
 
 extern long long frequency_calibration;
 extern double ppm_factor;
@@ -258,8 +258,8 @@ extern DAC dac[2];
 extern int locked;
 int set_locked(int state);
 
-extern gboolean duplex;
-extern gboolean mute_rx_while_transmitting;
+extern int duplex;
+extern int mute_rx_while_transmitting;
 extern int rx_height;
 
 extern int cw_keys_reversed;
@@ -369,8 +369,8 @@ extern int rx_gain_calibration;  // used to calibrate the input signal
 extern double drive_max;         // maximum value of the drive slider
 extern double drive_digi_max;    // maximum value allowed in DIGU/DIGL
 
-extern gboolean display_warnings;
-extern gboolean display_pacurr;
+extern int display_warnings;
+extern int display_pacurr;
 
 extern int hl2_audio_codec;
 extern int hl2_cl1_input;
@@ -463,7 +463,7 @@ extern int compare_doubles (const void *a, const void *b);
 
 extern int optimize_for_touchscreen;
 extern void my_combo_attach (GtkGrid *grid, GtkWidget *combo, int row, int col, int spanrow, int spancol);
-extern gboolean win_set_bgcolor (GtkWidget *widget, gpointer data);
+extern int win_set_bgcolor (GtkWidget *widget, gpointer data);
 
 //
 // Macro for a memory barrier, preventing changing the execution order

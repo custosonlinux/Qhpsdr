@@ -1,6 +1,15 @@
 #include "mainwindow.h"
 #include <QMenuBar>
 #include <QStatusBar>
+#include <QDebug>
+
+extern "C" {
+    #include "radio.h"
+    #include "discovery.h"
+}
+
+#include <QMenuBar>
+#include <QStatusBar>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // Initial UI Setup
@@ -8,7 +17,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *exitAction = menu->addAction(tr("E&xit"));
     connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
 
-    statusBar()->showMessage(tr("Qhpsdr Ready."));
+        statusBar()->showMessage(tr("Qhpsdr Ready."));
+
+    // Start Hardware Discovery (Async)
+    qDebug() << "Starting SDR Discovery...";
+    // discovery_init(); // Wir müssen erst sicherstellen, dass alle Symbole linken
+}
 }
 
 MainWindow::~MainWindow() {}

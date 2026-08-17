@@ -19,7 +19,7 @@
 *
 */
 
-#include <gtk/gtk.h>
+//#include <gtk/gtk.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,9 +108,9 @@ double ctcss_frequencies[CTCSS_FREQUENCIES] = {
 static int p1radio = 0, p2radio = 0; // sine tone to the radio
 static int p1local = 0, p2local = 0; // sine tone to local audio
 
-static gboolean close_cb(void) {
+static int close_cb(void) {
   // there is nothing to clean up
-  return TRUE;
+  return 1;
 }
 
 #if defined (__clang__)
@@ -599,13 +599,13 @@ static void tx_display_debug_update(TRANSMITTER *tx, gint64 elapsed_us, int rend
   }
 }
 
-static gboolean tx_update_display(gpointer data) {
+static int tx_update_display(gpointer data) {
   TRANSMITTER *tx = (TRANSMITTER *) data;
   gint64 debug_start_us = display_debug ? g_get_monotonic_time() : 0;
   int rc;
   //t_print("tx_update_display: tx id=%d\n",tx->id);
   if (tx->displaying) {
-    // if "MON" button is active (tx->feedback is TRUE),
+    // if "MON" button is active (tx->feedback is 1),
     // then obtain spectrum pixels from PS_RX_FEEDBACK,
     // that is, display the (attenuated) TX signal from the "antenna"
     //
@@ -846,9 +846,9 @@ static gboolean tx_update_display(gpointer data) {
     if (display_debug) {
       tx_display_debug_update(tx, g_get_monotonic_time() - debug_start_us, rc);
     }
-    return TRUE; // keep going
+    return 1; // keep going
   }
-  return FALSE; // no more timer events
+  return 0; // no more timer events
 }
 
 void tx_create_dialog(TRANSMITTER *tx) {
@@ -864,10 +864,10 @@ void tx_create_dialog(TRANSMITTER *tx) {
   tx->dialog = gtk_dialog_new();
   gtk_window_set_transient_for(GTK_WINDOW(tx->dialog), GTK_WINDOW(top_window));
   // Resizing für das transient Fenster deaktivieren
-  gtk_window_set_resizable(GTK_WINDOW(tx->dialog), FALSE);
+  gtk_window_set_resizable(GTK_WINDOW(tx->dialog), 0);
   GtkWidget *headerbar = gtk_header_bar_new();
   gtk_window_set_titlebar(GTK_WINDOW(tx->dialog), headerbar);
-  gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(headerbar), FALSE);
+  gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(headerbar), 0);
   gtk_header_bar_set_title(GTK_HEADER_BAR(headerbar), "TX [duplex]");
   g_signal_connect(tx->dialog, "delete_event", G_CALLBACK(close_cb), NULL);
   g_signal_connect(tx->dialog, "destroy", G_CALLBACK(close_cb), NULL);
@@ -882,7 +882,7 @@ void tx_create_dialog(TRANSMITTER *tx) {
 // -----------------------------------------------------------
 // TX LEVELS WINDOW
 // -----------------------------------------------------------
-static gboolean tx_levels_configure_cb(GtkWidget *widget, GdkEventConfigure *event, gpointer data) {
+static int tx_levels_configure_cb(GtkWidget *widget, GdkEventConfigure *event, gpointer data) {
   TRANSMITTER *tx = (TRANSMITTER *) data;
   int w = gtk_widget_get_allocated_width(widget);
   int h = gtk_widget_get_allocated_height(widget);
@@ -895,16 +895,16 @@ static gboolean tx_levels_configure_cb(GtkWidget *widget, GdkEventConfigure *eve
   cairo_set_source_rgba(cr, COLOUR_PAN_BACKGND);
   cairo_paint(cr);
   cairo_destroy(cr);
-  return TRUE;
+  return 1;
 }
 
-static gboolean tx_levels_draw_cb(GtkWidget *widget, cairo_t *cr, gpointer data) {
+static int tx_levels_draw_cb(GtkWidget *widget, cairo_t *cr, gpointer data) {
   TRANSMITTER *tx = (TRANSMITTER *) data;
   if (tx->levels_surface) {
     cairo_set_source_surface(cr, tx->levels_surface, 0, 0);
     cairo_paint(cr);
   }
-  return FALSE;
+  return 0;
 }
 
 /* Callback: Popover anzeigen, wenn Anchor gemappt */
@@ -964,11 +964,11 @@ void tx_create_levels_window(TRANSMITTER *tx) {
     /* Popover erzeugen */
     GtkWidget *levels_popover = gtk_popover_new(anchor);
     gtk_popover_set_position(GTK_POPOVER(levels_popover), GTK_POS_RIGHT);
-    gtk_popover_set_modal(GTK_POPOVER(levels_popover), FALSE);
+    gtk_popover_set_modal(GTK_POPOVER(levels_popover), 0);
     /* Inhalt */
     GtkWidget *levels_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(levels_popover), levels_box);
-    gtk_box_pack_start(GTK_BOX(levels_box), tx->levels_area, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(levels_box), tx->levels_area, 1, 1, 0);
     tx->levels_dialog = levels_popover;
     g_signal_connect(tx->levels_dialog, "destroy", G_CALLBACK(close_cb), NULL);
     if (gtk_widget_get_mapped(anchor)) {
@@ -986,12 +986,12 @@ X11_FALLBACK:
     if (tx->levels_y_pos <= 0) { tx->levels_y_pos = 100; }
     GtkWidget *dlg = gtk_dialog_new();
     gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(top_window));
-    gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
-    gtk_window_set_accept_focus(GTK_WINDOW(dlg), FALSE);
-    gtk_widget_set_can_focus(dlg, FALSE);
+    gtk_window_set_resizable(GTK_WINDOW(dlg), 0);
+    gtk_window_set_accept_focus(GTK_WINDOW(dlg), 0);
+    gtk_widget_set_can_focus(dlg, 0);
     GtkWidget *hb = gtk_header_bar_new();
     gtk_window_set_titlebar(GTK_WINDOW(dlg), hb);
-    gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(hb), FALSE);
+    gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(hb), 0);
     gtk_header_bar_set_title(GTK_HEADER_BAR(hb),
                              tx->show_af_peak ? "TX Audio Levels [Peak]" : "TX Audio Levels [Avg]");
     gtk_window_set_default_size(GTK_WINDOW(dlg), tx->levels_width, tx->levels_height);
@@ -1134,7 +1134,7 @@ TRANSMITTER *tx_create_transmitter(int id, int pixels, int width, int height) {
           tx->width, tx->height);
   tx->filter_low = tx_filter_low;
   tx->filter_high = tx_filter_high;
-  tx->use_rx_filter = FALSE;
+  tx->use_rx_filter = 0;
   tx->out_of_band = 0;
   tx->twotone = 0;
   tx->noise = 0;
@@ -1162,7 +1162,7 @@ TRANSMITTER *tx_create_transmitter(int id, int pixels, int width, int height) {
   tx->tci_tx_audio_gain_db = -3;  // default: -3db, property may override
   tx->attenuation = 0;
   tx->ctcss = 11;
-  tx->ctcss_enabled = FALSE;
+  tx->ctcss_enabled = 0;
   tx->deviation = 2500;
   tx->pre_emphasize = 0;
   tx->am_carrier_level = 0.5;
@@ -1248,7 +1248,7 @@ TRANSMITTER *tx_create_transmitter(int id, int pixels, int width, int height) {
   tx->dialog_y = -1;
   tx->dialog = NULL;
   tx->swr = 1.0;
-  tx->swr_protection = FALSE;
+  tx->swr_protection = 0;
   tx->swr_alarm = 3.0;     // default value for SWR protection
   tx->alc = 0.0;
   tx->eq_enable = 0;
@@ -2598,10 +2598,10 @@ void tx_set_compressor(TRANSMITTER *tx) {
   t_print("%s: Baseband-Compr state %d, level %.1f\n",
           __func__, tx->compressor, tx->compressor_level);
   if (can_transmit && display_sliders) {
-    update_slider_lev_scale(TRUE);
-    update_slider_lev_button(TRUE);
-    update_slider_bbcompr_scale(TRUE);
-    update_slider_bbcompr_button(TRUE);
+    update_slider_lev_scale(1);
+    update_slider_lev_button(1);
+    update_slider_bbcompr_scale(1);
+    update_slider_bbcompr_button(1);
   }
 }
 
@@ -2768,7 +2768,7 @@ void tx_set_mic_gain(const TRANSMITTER *tx) {
           tx->id, _gain, tx->addgain_gain, tx->addgain_enable ? "on" : "off",
           pow(10.0, _gain * 0.05), vfo_get_tx_mode());
   if (can_transmit && display_sliders) {
-    update_slider_preamp_button(TRUE);
+    update_slider_preamp_button(1);
   }
 }
 

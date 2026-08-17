@@ -19,8 +19,8 @@
 *
 */
 
-#include <gtk/gtk.h>
-#include <gdk/gdk.h>
+//#include <gtk/gtk.h>
+//#include <gdk/gdk.h>
 #include <math.h>
 #include <semaphore.h>
 #include <string.h>
@@ -82,7 +82,7 @@ static void vfo_apply_tune_drive_reset(void) {
   }
   if (transmitter->tune_drive != 1) {
     transmitter->tune_drive = 1;
-    update_slider_tune_drive_scale(TRUE);
+    update_slider_tune_drive_scale(1);
     tci_tune_drive_changed();
     t_print("%s: Tune Drive reset to 1%%\n", __func__);
   }
@@ -709,7 +709,7 @@ void vfo_restore_state(void) {
 
 static guint split_band_sync_source = 0;
 
-static gboolean sync_vfos_after_split_band_change(gpointer data) {
+static int sync_vfos_after_split_band_change(gpointer data) {
   int id = GPOINTER_TO_INT(data);
   split_band_sync_source = 0;
   if (!disable_split_on_band_change || split) {
@@ -789,7 +789,7 @@ static inline void vfo_adjust_band(int v, long long f) {
       }
       if (bs != NULL && bs->tune_drive > 0 && bs->tune_drive <= 100 && transmitter->drive_per_band) {
         transmitter->tune_drive = bs->tune_drive;
-        update_slider_tune_drive_scale(TRUE);
+        update_slider_tune_drive_scale(1);
         t_print("%s: bs->tune_drive = %d\n", __func__, bs->tune_drive);
       }
       vfo_apply_tune_drive_reset();
@@ -975,7 +975,7 @@ void vfo_band_changed(int id, int b) {
       }
       if (bs != NULL && bs->tune_drive > 0 && bs->tune_drive <= 100 && transmitter->drive_per_band) {
         transmitter->tune_drive = bs->tune_drive;
-        update_slider_tune_drive_scale(TRUE);
+        update_slider_tune_drive_scale(1);
         t_print("%s: bs->tune_drive = %d\n", __func__, bs->tune_drive);
       }
       vfo_apply_tune_drive_reset();
@@ -1109,19 +1109,19 @@ void vfo_id_mode_changed(int id, int m) {
     tx_set_mode(transmitter, vfo_get_tx_mode());
     tx_set_analyzer(transmitter);
     if (display_sliders && (m == modeDIGU || m == modeDIGL)) {
-      update_slider_bbcompr_scale(FALSE);
-      update_slider_bbcompr_button(FALSE);
-      update_slider_lev_scale(FALSE);
-      update_slider_lev_button(FALSE);
-      update_slider_preamp_button(FALSE);
-      // update_slider_snb_button(FALSE);
+      update_slider_bbcompr_scale(0);
+      update_slider_bbcompr_button(0);
+      update_slider_lev_scale(0);
+      update_slider_lev_button(0);
+      update_slider_preamp_button(0);
+      // update_slider_snb_button(0);
     } else if (display_sliders) {
-      update_slider_bbcompr_scale(TRUE);
-      update_slider_bbcompr_button(TRUE);
-      update_slider_lev_scale(TRUE);
-      update_slider_lev_button(TRUE);
-      update_slider_preamp_button(TRUE);
-      // update_slider_snb_button(TRUE);
+      update_slider_bbcompr_scale(1);
+      update_slider_bbcompr_button(1);
+      update_slider_lev_scale(1);
+      update_slider_lev_button(1);
+      update_slider_preamp_button(1);
+      // update_slider_snb_button(1);
     }
   }
   //
@@ -1573,17 +1573,17 @@ void vfo_id_move_to(int id, long long hz) {
 }
 
 // cppcheck-suppress constParameterCallback
-static gboolean vfo_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpointer data) {
+static int vfo_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event, gpointer data) {
   RECEIVER *rx = active_receiver;
   if (!rx) {
     t_print("%s: no active RX\n", __func__);
-    return FALSE;
+    return 0;
   }
   // return rx_scroll_event(widget, event, data);
   return rx_scroll_event(widget, event, rx);
 }
 
-static gboolean vfo_configure_event_cb(GtkWidget         *widget,
+static int vfo_configure_event_cb(GtkWidget         *widget,
                                        GdkEventConfigure *event,
                                        gpointer           data) {
   if (vfo_surface) {
@@ -1600,15 +1600,15 @@ static gboolean vfo_configure_event_cb(GtkWidget         *widget,
   cairo_paint(cr);
   cairo_destroy(cr);
   g_idle_add(ext_vfo_update, NULL);
-  return TRUE;
+  return 1;
 }
 
-static gboolean vfo_draw_cb(GtkWidget *widget,
+static int vfo_draw_cb(GtkWidget *widget,
                             cairo_t   *cr,
                             gpointer   data) {
   cairo_set_source_surface(cr, vfo_surface, 0.0, 0.0);
   cairo_paint(cr);
-  return FALSE;
+  return 0;
 }
 
 //
@@ -2452,7 +2452,7 @@ void vfo_update(void) {
 }
 
 // cppcheck-suppress constParameterCallback
-static gboolean vfo_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int vfo_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   int v;
   switch (event->button) {
   case GDK_BUTTON_PRIMARY:
@@ -2465,7 +2465,7 @@ static gboolean vfo_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpo
     g_idle_add(ext_start_band, NULL);
     break;
   }
-  return TRUE;
+  return 1;
 }
 
 GtkWidget *vfo_init(int width, int height) {

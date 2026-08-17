@@ -40,7 +40,7 @@ static const int cw_mid_water  = 1024;                // target buffer filling f
 static const int cw_low_water  =  896;                // low water mark for CW
 static const int cw_high_water = 1152;                // high water mark for CW
 
-#include <gtk/gtk.h>
+//#include <gtk/gtk.h>
 #include <stdint.h>
 
 #include <stdio.h>
@@ -748,7 +748,7 @@ static void *mic_read_thread(gpointer arg) {
           t_print("%s: read from audio interface failed (%s)\n",
                   __func__,
                   snd_strerror(rc));
-          //running=FALSE;
+          //running=0;
         } else {
           t_print("%s: read %d\n", __func__, rc);
         }

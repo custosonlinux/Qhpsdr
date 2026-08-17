@@ -19,7 +19,7 @@
 *
 */
 
-#include <gtk/gtk.h>
+//#include <gtk/gtk.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -1411,7 +1411,7 @@ static int tx_feedback_channel(void) {
 }
 
 
-static gboolean old_protocol_diversity_rx_active(void) {
+static int old_protocol_diversity_rx_active(void) {
   return diversity_enabled && !radio_is_transmitting() && !radio_ptt;
 }
 

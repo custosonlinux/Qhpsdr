@@ -19,8 +19,8 @@
 *
 */
 
-#include <gtk/gtk.h>
-#include <gdk/gdk.h>
+//#include <gtk/gtk.h>
+//#include <gdk/gdk.h>
 #include <math.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -178,18 +178,18 @@ cleanup:
   return rc;
 }
 
-static gboolean close_cb(void) {
+static int close_cb(void) {
   // There is nothing to clean up
-  return TRUE;
+  return 1;
 }
 
-static gboolean start_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int start_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   /* korrektes Gerät aus der Discover-Liste selektieren */
   selected_device = GPOINTER_TO_INT(data);
   /* Safety: Index validieren */
   if (selected_device < 0 || selected_device >= devices) {
     t_print("%s: invalid selected_device=%d devices=%d\n", __func__, selected_device, devices);
-    return TRUE;
+    return 1;
   }
   active_device_index = selected_device;
   radio = &discovered[selected_device];
@@ -248,8 +248,8 @@ static gboolean start_cb(GtkWidget *widget, GdkEventButton *event, gpointer data
     discover_only_stemlab = 1;
     gtk_widget_destroy(discovery_dialog);
     status_text("Wait for STEMlab app\n");
-    g_timeout_add(2000, delayed_discovery, NULL);
-    return TRUE;
+    //g_timeout_add(2000, delayed_discovery, NULL);
+    return 1;
   }
 #endif
   //
@@ -257,9 +257,9 @@ static gboolean start_cb(GtkWidget *widget, GdkEventButton *event, gpointer data
   // of the status label
   //
   status_text("Starting Radio ...\n");
-  g_timeout_add(100, ext_start_radio, NULL);
+  //g_timeout_add(100, ext_start_radio, NULL);
   gtk_widget_destroy(discovery_dialog);
-  return TRUE;
+  return 1;
 }
 
 // --- Hermes Lite 2: Reboot via C&C-Frame @ UDP:1025, target addr 0x3A ---
@@ -286,7 +286,7 @@ static int hl2_send_reboot_1025(const struct sockaddr_in *dst_in) {
   return (n == (ssize_t) sizeof msg) ? 0 : -1;
 }
 
-static gboolean reboot_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int reboot_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   DISCOVERED *radio = (DISCOVERED *) data;
   struct sockaddr_in dst = radio->info.network.address;
   int rc = hl2_send_reboot_1025(&dst);
@@ -297,27 +297,27 @@ static gboolean reboot_cb(GtkWidget *widget, GdkEventButton *event, gpointer dat
     status_text("HL2: reboot send error\n");
     t_print("%s: HL2: reboot send error\n", __func__);
   }
-  return TRUE;
+  return 1;
 }
 
-static gboolean protocols_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int protocols_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   configure_protocols(discovery_dialog);
-  return TRUE;
+  return 1;
 }
 
-static gboolean discover_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int discover_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   gtk_widget_destroy(discovery_dialog);
-  g_timeout_add(100, delayed_discovery, NULL);
-  return TRUE;
+  //g_timeout_add(100, delayed_discovery, NULL);
+  return 1;
 }
 
-static gboolean exit_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int exit_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   gtk_widget_destroy(discovery_dialog);
   exit(EXIT_SUCCESS);
-  return TRUE;
+  return 1;
 }
 
-static gboolean radio_ip_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int radio_ip_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   struct sockaddr_in sa;
   int len;
   const char *cp;
@@ -326,7 +326,7 @@ static gboolean radio_ip_cb(GtkWidget *widget, GdkEventButton *event, gpointer d
   if (len == 0) {
     // if the text entry field is empty, delete ip.addr
     unlink("ip.addr");
-    return TRUE;
+    return 1;
   }
   // Accept both IP addresses and hostnames
   // Try to validate as IP first, but if it fails, accept it anyway (could be hostname)
@@ -343,7 +343,7 @@ static gboolean radio_ip_cb(GtkWidget *widget, GdkEventButton *event, gpointer d
   }
   if (!is_valid_ip && !is_valid_hostname) {
     // Neither valid IP nor valid hostname
-    return TRUE;
+    return 1;
   }
   g_strlcpy(ipaddr_radio, cp, IPADDR_LEN);
   FILE *fp = fopen("ip.addr", "w");
@@ -351,22 +351,22 @@ static gboolean radio_ip_cb(GtkWidget *widget, GdkEventButton *event, gpointer d
     fprintf(fp, "%s\n", ipaddr_radio);
     fclose(fp);
   }
-  return FALSE;
+  return 0;
 }
 
-static gboolean radio_port_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+static int radio_port_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   const char *cp;
   int port;
   cp = gtk_entry_get_text(GTK_ENTRY(tcpport));
   if (strlen(cp) == 0) {
     // If empty, use default port
     radio_port = 1024;
-    return TRUE;
+    return 1;
   }
   port = atoi(cp);
   if (port < 1 || port > 65535) {
     // Invalid port number
-    return TRUE;
+    return 1;
   }
   radio_port = port;
   FILE *fp = fopen("radio.port", "w");
@@ -374,7 +374,7 @@ static gboolean radio_port_cb(GtkWidget *widget, GdkEventButton *event, gpointer
     fprintf(fp, "%d\n", radio_port);
     fclose(fp);
   }
-  return FALSE;
+  return 0;
 }
 
 static void p2_angelia_ddc0_map_toggled(GtkToggleButton *button, gpointer data) {
@@ -505,7 +505,7 @@ void discovery(void) {
   gtk_window_set_transient_for(GTK_WINDOW(discovery_dialog), GTK_WINDOW(top_window));
   GtkWidget *headerbar = gtk_header_bar_new();
   gtk_window_set_titlebar(GTK_WINDOW(discovery_dialog), headerbar);
-  gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(headerbar), TRUE);
+  gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(headerbar), 1);
   char _title[64];
   snprintf(_title, 64, "%s by DL1BZ %s - Discover SDR Device", PGNAME, build_version);
   gtk_header_bar_set_title(GTK_HEADER_BAR(headerbar), _title);
@@ -514,7 +514,7 @@ void discovery(void) {
   GtkWidget *content;
   content = gtk_dialog_get_content_area(GTK_DIALOG(discovery_dialog));
   GtkWidget *grid = gtk_grid_new();
-  gtk_grid_set_row_homogeneous(GTK_GRID(grid), TRUE);
+  gtk_grid_set_row_homogeneous(GTK_GRID(grid), 1);
   gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
   int row = 0;
   if (devices == 0) {
@@ -605,11 +605,11 @@ void discovery(void) {
         break;
       case STATE_SENDING:
         gtk_button_set_label(GTK_BUTTON(start_button), "In Use");
-        gtk_widget_set_sensitive(start_button, FALSE);
+        gtk_widget_set_sensitive(start_button, 0);
         break;
       case STATE_INCOMPATIBLE:
         gtk_button_set_label(GTK_BUTTON(start_button), "Incompatible");
-        gtk_widget_set_sensitive(start_button, FALSE);
+        gtk_widget_set_sensitive(start_button, 0);
         break;
       }
       int can_connect = 0;
@@ -630,12 +630,12 @@ void discovery(void) {
       }
       if (!can_connect) {
         gtk_button_set_label(GTK_BUTTON(start_button), "Subnet!");
-        gtk_widget_set_sensitive(start_button, FALSE);
+        gtk_widget_set_sensitive(start_button, 0);
       }
       if (d->protocol == STEMLAB_PROTOCOL) {
         if (d->software_version == 0) {
           gtk_button_set_label(GTK_BUTTON(start_button), "No SDR app found!");
-          gtk_widget_set_sensitive(start_button, FALSE);
+          gtk_widget_set_sensitive(start_button, 0);
         } else {
           apps_combobox[row] = gtk_combo_box_text_new();
           // We want the default selection priority for the STEMlab app to be
@@ -752,7 +752,7 @@ void discovery(void) {
 }
 
 //
-// Execute discovery() through g_timeout_add()
+// Execute discovery() through //g_timeout_add()
 //
 int delayed_discovery(gpointer data) {
   discovery();

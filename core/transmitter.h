@@ -22,7 +22,7 @@
 #ifndef _TRANSMITTER_H
 #define _TRANSMITTER_H
 
-#include <gtk/gtk.h>
+//#include <gtk/gtk.h>
 
 #define CTCSS_FREQUENCIES 38
 extern double ctcss_frequencies[CTCSS_FREQUENCIES];

@@ -19,7 +19,7 @@
 *
 */
 
-#include <gtk/gtk.h>
+//#include <gtk/gtk.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,9 +58,9 @@
 #define max(x,y) (x<y?y:x)
 
 static int last_x;
-static gboolean has_moved = FALSE;
-static gboolean pressed = FALSE;
-static gboolean making_active = FALSE;
+static int has_moved = 0;
+static int pressed = 0;
+static int making_active = 0;
 
 #define AM_DC_OFFSET_HZ 500LL
 #define RX_CW_ZERO_BEAT_OUTPUT_RATE 48000.0
@@ -74,7 +74,7 @@ static gboolean making_active = FALSE;
 
 static void rx_cw_zero_beat_reset(RECEIVER *rx);
 static void rx_cw_zero_beat_sample(RECEIVER *rx, double sample);
-static gboolean rx_diversity_rx_active(void);
+static int rx_diversity_rx_active(void);
 static int rx_diversity_effective_vfo_id(const RECEIVER *rx);
 
 long long rx_get_mode_dc_offset(int id) {
@@ -112,13 +112,13 @@ void rx_weak_notify(gpointer data, GObject  *obj) {
 }
 
 // cppcheck-suppress constParameterPointer
-gboolean rx_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+int rx_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   const RECEIVER *rx = (RECEIVER *) data;
   if (rx == active_receiver) {
     if (event->button == GDK_BUTTON_PRIMARY) {
       last_x = (int) event->x;
-      has_moved = FALSE;
-      pressed = TRUE;
+      has_moved = 0;
+      pressed = 1;
     } else if (event->button == GDK_BUTTON_SECONDARY) {
       if (widget == rx->panadapter) {
         g_idle_add(ext_start_noise, NULL);
@@ -127,9 +127,9 @@ gboolean rx_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointe
       }
     }
   } else {
-    making_active = TRUE;
+    making_active = 1;
   }
-  return TRUE;
+  return 1;
 }
 
 void rx_set_active(RECEIVER *rx) {
@@ -153,10 +153,10 @@ void rx_set_active(RECEIVER *rx) {
 }
 
 // cppcheck-suppress constParameterPointer
-gboolean rx_button_release_event(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+int rx_button_release_event(GtkWidget *widget, GdkEventButton *event, gpointer data) {
   RECEIVER *rx = (RECEIVER *) data;
   if (making_active) {
-    making_active = FALSE;
+    making_active = 0;
     rx_set_active(rx);
     if (event->button == GDK_BUTTON_SECONDARY) {
       if (widget == rx->panadapter) {
@@ -171,20 +171,20 @@ gboolean rx_button_release_event(GtkWidget *widget, GdkEventButton *event, gpoin
       if (event->button == GDK_BUTTON_PRIMARY) {
         if (has_moved) {
           // drag
-          vfo_move((long long)((float)(x - last_x) *rx->hz_per_pixel), TRUE);
+          vfo_move((long long)((float)(x - last_x) *rx->hz_per_pixel), 1);
         } else {
           // move to this frequency
           vfo_move_to((long long)((float) x * rx->hz_per_pixel));
         }
         last_x = x;
-        pressed = FALSE;
+        pressed = 0;
       }
     }
   }
-  return TRUE;
+  return 1;
 }
 
-gboolean rx_motion_notify_event(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
+int rx_motion_notify_event(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
   int x, y;
   GdkModifierType state;
   const RECEIVER *rx = (RECEIVER *) data;
@@ -229,22 +229,22 @@ gboolean rx_motion_notify_event(GtkWidget *widget, GdkEventMotion *event, gpoint
     int moved = x - last_x;
     if (moved) {
       if (has_moved || moved < -1 || moved > 1) {
-        vfo_move((long long)((float) moved * rx->hz_per_pixel), FALSE);
+        vfo_move((long long)((float) moved * rx->hz_per_pixel), 0);
         last_x = x;
-        has_moved = TRUE;
+        has_moved = 1;
       }
     }
   }
-  return TRUE;
+  return 1;
 }
 
 // cppcheck-suppress constParameterPointer
-gboolean rx_scroll_event(GtkWidget *widget, const GdkEventScroll *event, gpointer data) {
+int rx_scroll_event(GtkWidget *widget, const GdkEventScroll *event, gpointer data) {
   RECEIVER *rx = (RECEIVER *) data;
   if (!rx) {
     // Falls kein gültiger Zeiger übergeben wurde, mache nichts und verhindere Absturz
     t_print("%s: ERROR: called with NULL RECEIVER pointer!\n", __func__);
-    return FALSE;  // Event nicht verarbeitet
+    return 0;  // Event nicht verarbeitet
   }
 #ifdef __APPLE__
   // if using Apple Magic Mouse it's tricky to use the mouse because we have only touch but no real wheel
@@ -255,16 +255,16 @@ gboolean rx_scroll_event(GtkWidget *widget, const GdkEventScroll *event, gpointe
   // Serveral tests with a Macbook Air M1 was showing, that combinations like SHIFT+CONTROL or SHIFT+OPTION
   // hasn't any effect. Otherwise, OPTION and CTRL+OPTION were working. Very strange...
   if (rx->wheel_present) {
-    gboolean shift = (event->state & GDK_SHIFT_MASK) != 0;
-    gboolean option = (event->state & GDK_MOD1_MASK) != 0;
+    int shift = (event->state & GDK_SHIFT_MASK) != 0;
+    int option = (event->state & GDK_MOD1_MASK) != 0;
     if ((shift && !option) || (!shift && option)) {   // XOR: Nur eine gedrückt
       vfo_step(event->direction == GDK_SCROLL_UP ? 10 : -10);
     } else {
       vfo_step(event->direction == GDK_SCROLL_UP ? 1 : -1);
     }
   } else {
-    gboolean option = event->state & GDK_MOD1_MASK;
-    gboolean control = event->state & GDK_CONTROL_MASK;
+    int option = event->state & GDK_MOD1_MASK;
+    int control = event->state & GDK_CONTROL_MASK;
     if (option && control) {
       vfo_step(event->direction == GDK_SCROLL_UP ? 10 : -10);
     } else if (option) {
@@ -280,7 +280,7 @@ gboolean rx_scroll_event(GtkWidget *widget, const GdkEventScroll *event, gpointe
     vfo_step(-wheel_step);
   }
 #endif
-  return TRUE;
+  return 1;
 }
 
 void rx_save_state(const RECEIVER *rx) {
@@ -691,10 +691,10 @@ static int rx_update_display(gpointer data) {
       if (display_debug) {
         rx_display_debug_update(rx, g_get_monotonic_time() - debug_start_us, rc);
       }
-      return TRUE;
+      return 1;
     }
   }
-  return FALSE;
+  return 0;
 }
 
 void rx_set_displaying(RECEIVER *rx) {
@@ -1223,7 +1223,7 @@ void rx_vfo_changed(RECEIVER *rx) {
 }
 
 
-static gboolean rx_diversity_rx_active(void) {
+static int rx_diversity_rx_active(void) {
   return diversity_enabled && !radio_is_transmitting() && !radio_ptt;
 }
 
