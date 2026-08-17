@@ -24,6 +24,7 @@ include_directories(include)
 set(SOURCES
     src/main.cpp
     src/mainwindow.cpp
+    include/mainwindow.h
 )
 
 qt_add_executable(Qhpsdr ${SOURCES})
