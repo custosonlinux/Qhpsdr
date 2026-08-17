@@ -72,6 +72,7 @@ signals:
 private:
     void processBlock();
     void finishOpen();
+    void applyDefaultPassband(RxMode mode);
 
     bool m_open = false;
     bool m_opening = false;
