@@ -88,7 +88,11 @@ void MainWindow::showDiscoveryDialog() {
         return;
     }
 
-    const auto &device = *dialog.selectedDevice();
+    // A real copy, not a reference: selectedDevice() returns
+    // std::optional<DiscoveredDevice> by value, so a reference bound
+    // through the dereferenced temporary would dangle as soon as this
+    // statement ends.
+    const DiscoveredDevice device = *dialog.selectedDevice();
     if (device.protocol != ORIGINAL_PROTOCOL) {
         statusBar()->showMessage(
             tr("%1 uses Protocol 2, which isn't wired up yet - only Protocol 1 devices can be connected.")
