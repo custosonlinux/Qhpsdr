@@ -10,12 +10,13 @@ class QComboBox;
 class QProgressBar;
 class QLabel;
 
-// Minimal VFO panel: frequency readout/entry, mode + tuning-step selectors,
-// and an (uncalibrated) signal level meter. Functionally modeled on
-// deskHPSDR's VFO bar (core/deskhpsdr-src/vfo.c - mode list from mode.h,
-// step table from vfo.c's `steps`/`step_labels`), but implemented as plain
-// Qt widgets rather than the original's custom cairo-drawn LCD panel; this
-// project's UI is being redesigned from scratch, not pixel-cloned.
+// Minimal VFO panel: frequency readout/entry, mode + tuning-step + filter
+// selectors, and an (uncalibrated) signal level meter. Functionally
+// modeled on deskHPSDR's VFO bar (core/deskhpsdr-src/vfo.c - mode list
+// from mode.h, step table from vfo.c's `steps`/`step_labels`, filter
+// presets from core/filtertable.h), but implemented as plain Qt widgets
+// rather than the original's custom cairo-drawn LCD panel; this project's
+// UI is being redesigned from scratch, not pixel-cloned.
 class VfoPanel : public QWidget {
     Q_OBJECT
 
@@ -27,6 +28,8 @@ public:
     void setFrequencyHz(double hz);
     double frequencyHz() const { return m_frequencyHz; }
 
+    // Also repopulates the filter combo for the new mode's preset list
+    // and selects that mode's default filter (see core/filtertable.h).
     void setRxMode(RxMode mode);
     RxMode rxMode() const { return m_mode; }
 
@@ -36,9 +39,10 @@ public:
     void setConnected(bool connected);
 
 signals:
-    // User-initiated changes (typed a frequency, picked a mode).
+    // User-initiated changes (typed a frequency, picked a mode/filter).
     void frequencyEditedHz(double hz);
     void modeSelected(RxMode mode);
+    void filterSelected(double lowHz, double highHz);
 
 protected:
     void wheelEvent(QWheelEvent *event) override;
@@ -47,10 +51,13 @@ private:
     void updateFrequencyDisplay();
     void onFrequencyEditingFinished();
     void onModeComboChanged(int index);
+    void onFilterComboChanged(int index);
+    void repopulateFilterCombo();
 
     QLineEdit *m_freqEdit = nullptr;
     QComboBox *m_modeCombo = nullptr;
     QComboBox *m_stepCombo = nullptr;
+    QComboBox *m_filterCombo = nullptr;
     QProgressBar *m_meter = nullptr;
     QLabel *m_meterLabel = nullptr;
 

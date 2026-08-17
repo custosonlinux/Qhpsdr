@@ -6,53 +6,13 @@
 #include <QStandardPaths>
 #include <thread>
 
+#include "filtertable.h"
+
 extern "C" {
 #include "wdsp.h"
 }
 
 namespace {
-// Default passband edges (Hz, relative to the tuned/DDC frequency) per
-// mode, taken from deskHPSDR's filter tables (core/deskhpsdr-src/filter.c:
-// filterLSB/filterUSB/... "2.9k"/"5.2k"/"500" rows) - not a fixed filter
-// selection UI yet, just a sane starting default per mode so WDSP's
-// bandpass (SetRXABandpassRun, enabled in finishOpen()) actually has a
-// width instead of whatever create_rxa() zero-initializes it to.
-struct Passband {
-    double low;
-    double high;
-};
-
-Passband defaultPassbandFor(RxMode mode) {
-    switch (mode) {
-    case RxMode::LSB:
-        return {-3050.0, -150.0}; // "2.9k"
-    case RxMode::USB:
-        return {150.0, 3050.0}; // "2.9k"
-    case RxMode::DSB:
-    case RxMode::AM:
-    case RxMode::SAM:
-        return {-2600.0, 2600.0}; // "5.2k"
-    case RxMode::CWL:
-        return {-250.0, 250.0}; // "500" (no sidetone offset applied yet)
-    case RxMode::CWU:
-        return {-250.0, 250.0};
-    case RxMode::DIGL:
-        return {-1500.0, 1500.0};
-    case RxMode::DIGU:
-        return {-1500.0, 1500.0};
-    case RxMode::SPEC:
-    case RxMode::DRM:
-        return {-2600.0, 2600.0};
-    case RxMode::FM:
-    case RxMode::WBFM:
-        // deskHPSDR: "This FMN filter edges are nowhere used" - FM/WBFM
-        // selectivity comes from the FM demodulator's deviation setting,
-        // not the bandpass filter.
-        return {-8000.0, 8000.0};
-    }
-    return {-2600.0, 2600.0};
-}
-
 // Trailing separator required: WDSPwisdom() does a plain strcpy+strncat of
 // "wdspWisdom01" onto whatever is passed in (core/wdsp-2.00/wisdom.c).
 QString wisdomDirectory() {
@@ -159,15 +119,22 @@ void RxAudioChannel::close() {
 }
 
 void RxAudioChannel::setMode(RxMode mode) {
-    if (m_open) {
-        SetRXAMode(m_channel, static_cast<int>(mode));
-        applyDefaultPassband(mode);
+    if (!m_open) {
+        return;
+    }
+    SetRXAMode(m_channel, static_cast<int>(mode));
+    const auto filters = filtersForMode(mode);
+    const int idx = defaultFilterIndexForMode(mode);
+    if (idx >= 0 && idx < filters.size()) {
+        setPassband(filters[idx].low, filters[idx].high);
     }
 }
 
-void RxAudioChannel::applyDefaultPassband(RxMode mode) {
-    const Passband pb = defaultPassbandFor(mode);
-    RXASetPassband(m_channel, pb.low, pb.high);
+void RxAudioChannel::setPassband(double lowHz, double highHz) {
+    if (!m_open) {
+        return;
+    }
+    RXASetPassband(m_channel, lowHz, highHz);
 }
 
 void RxAudioChannel::feedSample(double i, double q) {

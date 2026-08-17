@@ -56,7 +56,14 @@ public:
     void close();
     bool isOpen() const { return m_open; }
 
+    // Applies the mode's default passband width (see core/filtertable.h)
+    // in addition to switching the demodulator.
     void setMode(RxMode mode);
+
+    // For picking a specific named filter preset instead of the mode
+    // default - see core/filtertable.h's filtersForMode(). No-op while
+    // the channel is closed/still opening.
+    void setPassband(double lowHz, double highHz);
 
     // i, q normalized to [-1, 1] (e.g. a 24-bit ADC sample / 2^23). No-op
     // while the channel is still opening or closed.
@@ -77,7 +84,6 @@ signals:
 private:
     void processBlock();
     void finishOpen();
-    void applyDefaultPassband(RxMode mode);
 
     bool m_open = false;
     bool m_opening = false;

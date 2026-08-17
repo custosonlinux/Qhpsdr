@@ -51,6 +51,8 @@ set(SOURCES
     core/oldprotocol.h
     core/rxaudio.cpp
     core/rxaudio.h
+    core/filtertable.cpp
+    core/filtertable.h
     src/vfopanel.cpp
     include/vfopanel.h
     core/spectrumanalyzer.cpp

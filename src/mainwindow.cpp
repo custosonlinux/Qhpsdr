@@ -73,6 +73,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 m_rxAudio, [this, mode]() { m_rxAudio->setMode(mode); }, Qt::QueuedConnection);
         }
     });
+    connect(m_vfoPanel, &VfoPanel::filterSelected, this, [this](double lowHz, double highHz) {
+        if (m_rxAudio) {
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, lowHz, highHz]() { m_rxAudio->setPassband(lowHz, highHz); },
+                Qt::QueuedConnection);
+        }
+    });
 
     m_spectrum = new SpectrumAnalyzer(this);
     connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {

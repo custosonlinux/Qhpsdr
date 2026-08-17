@@ -1,5 +1,7 @@
 #include "vfopanel.h"
 
+#include "filtertable.h"
+
 #include <QComboBox>
 #include <QFont>
 #include <QGridLayout>
@@ -107,6 +109,11 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     m_stepCombo->setCurrentIndex(kDefaultStepIndex);
     m_stepCombo->setToolTip(tr("Tuning step (scroll the frequency field to tune)"));
 
+    m_filterCombo = new QComboBox(this);
+    m_filterCombo->setStyleSheet(kComboStyle);
+    connect(m_filterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &VfoPanel::onFilterComboChanged);
+
     m_meterLabel = new QLabel(tr("Signal"), this);
     m_meterLabel->setStyleSheet(kDarkLabelStyle);
     m_meter = new QProgressBar(this);
@@ -123,6 +130,8 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     modeLabel->setStyleSheet(kDarkLabelStyle);
     auto *stepLabel = new QLabel(tr("Step"), this);
     stepLabel->setStyleSheet(kDarkLabelStyle);
+    auto *filterLabel = new QLabel(tr("Filter"), this);
+    filterLabel->setStyleSheet(kDarkLabelStyle);
 
     auto *grid = new QGridLayout;
     grid->addWidget(m_freqEdit, 0, 0, 1, 3);
@@ -131,8 +140,10 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     grid->addWidget(m_modeCombo, 1, 1);
     grid->addWidget(stepLabel, 1, 2);
     grid->addWidget(m_stepCombo, 1, 3);
+    grid->addWidget(filterLabel, 1, 4);
+    grid->addWidget(m_filterCombo, 1, 5);
     grid->addWidget(m_meterLabel, 2, 0);
-    grid->addWidget(m_meter, 2, 1, 1, 3);
+    grid->addWidget(m_meter, 2, 1, 1, 5);
 
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(grid);
@@ -161,6 +172,20 @@ void VfoPanel::setRxMode(RxMode mode) {
             break;
         }
     }
+    repopulateFilterCombo();
+}
+
+void VfoPanel::repopulateFilterCombo() {
+    QSignalBlocker blocker(m_filterCombo);
+    m_filterCombo->clear();
+    const auto filters = filtersForMode(m_mode);
+    for (const auto &f : filters) {
+        m_filterCombo->addItem(f.name);
+    }
+    const int defaultIndex = defaultFilterIndexForMode(m_mode);
+    if (defaultIndex >= 0 && defaultIndex < filters.size()) {
+        m_filterCombo->setCurrentIndex(defaultIndex);
+    }
 }
 
 void VfoPanel::setSignalLevel(double level) {
@@ -171,6 +196,7 @@ void VfoPanel::setConnected(bool connected) {
     m_freqEdit->setEnabled(connected);
     m_modeCombo->setEnabled(connected);
     m_stepCombo->setEnabled(connected);
+    m_filterCombo->setEnabled(connected);
 }
 
 void VfoPanel::onFrequencyEditingFinished() {
@@ -189,7 +215,16 @@ void VfoPanel::onModeComboChanged(int index) {
         return;
     }
     m_mode = kModes[index].mode;
+    repopulateFilterCombo();
     emit modeSelected(m_mode);
+}
+
+void VfoPanel::onFilterComboChanged(int index) {
+    const auto filters = filtersForMode(m_mode);
+    if (index < 0 || index >= filters.size()) {
+        return;
+    }
+    emit filterSelected(filters[index].low, filters[index].high);
 }
 
 void VfoPanel::wheelEvent(QWheelEvent *event) {
