@@ -1,0 +1,72 @@
+/*  Copyright (C)
+*   2026 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   TCI server based on libwebsockets is a complete rebuild for deskHPSDR
+*   exclusivly by Heiko Amft, DL1BZ
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+//
+// TCI server based on libwebsockets
+// complete rebuild for deskHPSDR by DL1BZ
+//
+
+#include "receiver.h"
+
+extern int tci_enable;
+extern int tci_port;   // usually 40001
+extern int tci_txonly; // only report TX frequency
+
+void launch_tci(void);
+void shutdown_tci(void);
+void tci_send_stop_and_flush(void);
+void tci_mox_changed(int state);
+void tci_tx_footswitch_changed(int state);
+void tci_vfo_changed(int id);
+void tci_vfos_changed(void);
+void tci_mode_changed(int id);
+void tci_tx_frequency_changed(void);
+void tci_drive_changed(void);
+void tci_tune_drive_changed(void);
+void tci_volume_changed(int receiver_id);
+void tci_agc_gain_changed(int receiver_id);
+void tci_agc_mode_changed(int receiver_id);
+void tci_mute_changed(int receiver_id);
+void tci_rx_mute_changed(int receiver_id);
+void tci_sql_enable_changed(int receiver_id);
+void tci_sql_level_changed(int receiver_id);
+void tci_rx_anf_enable_changed(int receiver_id);
+void tci_rx_apf_enable_changed(int receiver_id);
+void tci_rx_nb_enable_changed(int receiver_id);
+void tci_rx_nf_enable_changed(int receiver_id);
+void tci_rx_bin_enable_changed(int receiver_id);
+void tci_rx_nr_enable_changed(int receiver_id);
+int tci_is_applying(void);
+void tci_tune_changed(int state);
+void tci_split_changed(void);
+void tci_lock_changed(void);
+void tci_rit_enable_changed(int receiver_id);
+void tci_xit_enable_changed(void);
+void tci_rit_offset_changed(int receiver_id);
+void tci_xit_offset_changed(void);
+void tci_digu_offset_changed(void);
+void tci_digl_offset_changed(void);
+void tci_begin_tune_transition(void);
+void tci_end_tune_transition(void);
+int tci_is_tune_transition(void);
+void tci_rx_iq_block(RECEIVER *rx, const double *iq, guint frames);
+void tci_rx_audio_sample(RECEIVER *rx, float left, float right);
+void tci_rx_filter_band_changed(int receiver_id);

@@ -1,0 +1,443 @@
+/* Copyright (C)
+* 2015 - John Melton, G0ORX/N6LYT
+* 2024,2025 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This source code has been forked and was adapted from piHPSDR by DL1YCF to deskHPSDR in October 2024
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+#include <gtk/gtk.h>
+#include <semaphore.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "new_menu.h"
+#include "pa_menu.h"
+#include "band.h"
+#include "radio.h"
+#include "vfo.h"
+#include "message.h"
+#include "startup.h"
+
+static GtkWidget *dialog = NULL;
+
+static GtkWidget *calibgrid;
+
+//
+// we need all these "spin" widgets as a static variable
+// to continously update their displayed values during
+// a "single shot" calibration
+//
+static GtkWidget *spin[11];
+static GtkWidget *pa_r_spin[BANDS + XVTRS];
+
+static void reset_cb(GtkWidget *widget, gpointer data);
+
+static void cleanup(void) {
+  if (dialog != NULL) {
+    GtkWidget *tmp = dialog;
+    dialog = NULL;
+    memset(pa_r_spin, 0, sizeof(pa_r_spin));
+    gtk_widget_destroy(tmp);
+    sub_menu = NULL;
+    active_menu  = NO_MENU;
+    radio_save_state();
+  }
+}
+
+static gboolean close_cb(void) {
+  cleanup();
+  return TRUE;
+}
+
+static void destroy_cb(GtkWidget *widget, gpointer data) {
+  dialog = NULL;
+  memset(pa_r_spin, 0, sizeof(pa_r_spin));
+  sub_menu = NULL;
+  active_menu = NO_MENU;
+  radio_save_state();
+}
+
+static void update_pa_calibration_widgets(void) {
+  for (int b = 0; b < BANDS + XVTRS; b++) {
+    if (pa_r_spin[b] != NULL) {
+      BAND *band = band_get_band(b);
+      gtk_spin_button_set_value(GTK_SPIN_BUTTON(pa_r_spin[b]), band->pa_calibration);
+    }
+  }
+}
+
+static void pa_value_changed_cb(GtkWidget *widget, gpointer data) {
+  BAND *band = (BAND *) data;
+  band->pa_calibration = gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  int txvfo = vfo_get_tx_vfo();
+  int b = vfo[txvfo].band;
+  const BAND *current = band_get_band(b);
+  if (band == current) {
+    radio_calc_drive_level();
+  }
+}
+
+static void tx_out_of_band_cb(GtkWidget *widget, gpointer data) {
+  tx_out_of_band_allowed = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+}
+
+static void trim_changed_cb(GtkWidget *widget, gpointer data) {
+  int i = GPOINTER_TO_INT(data);
+  int k, flag;
+  flag = 0;
+  //
+  // The 'flag' indicates that we do a single-shot calibration,
+  // that is, the pa_trim[] values reflect a constant
+  // factor and the last pa_trim[] value is changed.
+  // In a single-shot calibration, change all the "lower" pa_trim
+  // values to maintain the constant factor, and update the
+  // text fields of the spinners.
+  //
+  if (i == 10) {
+    flag = 1;
+    for (k = 1; k < 10; k++) {
+      double fac = ((double) k * pa_trim[10]) / (10.0 * pa_trim[k]);
+      if (fac < 0.99 || fac > 1.01) { flag = 0; }
+    }
+  }
+  pa_trim[i] = gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  if (flag) {
+    // note that we have i==10 if the flag is nonzero.
+    for (k = 1; k < 10; k++) {
+      pa_trim[k] = 0.1 * k * pa_trim[10];
+      gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin[k]), (double) pa_trim[k]);
+    }
+  }
+}
+
+static void show_W(int watts, gboolean reset) {
+  int i;
+  int col, row;
+  int units;
+  char text[16];
+  double increment = 0.1 * watts;
+  if (reset) {
+    for (i = 0; i < 11; i++) {
+      pa_trim[i] = i * increment;
+    }
+  }
+  if (watts <= 1) {
+    units = 0;
+  } else if (watts <= 5) {
+    units = 1;
+  } else {
+    units = 2;
+  }
+  row = 1;
+  col = 0;
+  for (i = 1; i < 11; i++) {
+    switch (units) {
+    case 0:
+      snprintf(text, 16, "%0.3fW", i * increment);
+      break;
+    case 1:
+      snprintf(text, 16, "%0.1fW", i * increment);
+      break;
+    case 2:
+      snprintf(text, 16, "%dW", (int)(i * increment));
+      break;
+    }
+    GtkWidget *label = gtk_label_new(text);
+    gtk_widget_set_name(label, "boldlabel");
+    gtk_grid_attach(GTK_GRID(calibgrid), label, col++, row, 1, 1);
+    //
+    // We *need* a maximum value for the spinner, but a quite large
+    // value does not harm. So we allow up to 5 times the nominal
+    // value.
+    //
+    switch (units) {
+    case 0:
+      spin[i] = gtk_spin_button_new_with_range(0.001, (double)(5 * i * increment), 0.001);
+      break;
+    case 1:
+      spin[i] = gtk_spin_button_new_with_range(0.1, (double)(5 * i * increment), 0.1);
+      break;
+    case 2:
+      spin[i] = gtk_spin_button_new_with_range(1.0, (double)(5 * i * increment), 1.0);
+      break;
+    }
+    gtk_grid_attach(GTK_GRID(calibgrid), spin[i], col++, row, 1, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin[i]), (double) pa_trim[i]);
+    g_signal_connect(spin[i], "value_changed", G_CALLBACK(trim_changed_cb), GINT_TO_POINTER(i));
+    if (col == 4) {
+      row++;
+      col = 0;
+    }
+  }
+}
+
+static void clear_W(void) {
+  int i;
+  for (i = 0; i < 10; i++) {
+    gtk_grid_remove_row(GTK_GRID(calibgrid), 1);
+    spin[i] = NULL;
+  }
+}
+
+static void new_calib(gboolean flag) {
+  show_W(pa_power_list[pa_power], flag);
+  GtkWidget *reset_b = gtk_button_new_with_label("Reset");
+  gtk_grid_attach(GTK_GRID(calibgrid), reset_b, 0, 6, 4, 1);
+  g_signal_connect(reset_b, "button-press-event", G_CALLBACK(reset_cb), NULL);
+}
+
+static void reset_cb(GtkWidget *widget, gpointer data) {
+  clear_W();
+  new_calib(TRUE);
+  gtk_widget_show_all(calibgrid);
+}
+
+static void max_power_changed_cb(GtkWidget *widget, gpointer data) {
+  pa_power = gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+  t_print("max_power_changed_cb: %d\n", pa_power_list[pa_power]);
+  clear_W();
+  new_calib(TRUE);
+  gtk_widget_show_all(calibgrid);
+}
+
+static void save_cb(GtkWidget *widget, gpointer data) {
+  GtkWidget *msg;
+  PaCalibrationSave();
+  msg = gtk_message_dialog_new(GTK_WINDOW(dialog),
+                               GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                               GTK_MESSAGE_INFO,
+                               GTK_BUTTONS_OK,
+                               "PA calibration saved");
+  gtk_window_set_transient_for(GTK_WINDOW(msg), GTK_WINDOW(dialog));
+  gtk_window_set_position(GTK_WINDOW(msg), GTK_WIN_POS_CENTER_ON_PARENT);
+  gtk_dialog_run(GTK_DIALOG(msg));
+  gtk_widget_destroy(msg);
+}
+
+static void pa_calibration_load_native_response_cb(GtkNativeDialog *native,
+    gint response,
+    gpointer user_data) {
+  gchar *filename;
+  GtkWidget *msg;
+  if (response == GTK_RESPONSE_ACCEPT) {
+    filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(native));
+    if (filename != NULL) {
+      if (PaCalibrationLoad(filename)) {
+        update_pa_calibration_widgets();
+        msg = gtk_message_dialog_new(GTK_WINDOW(dialog),
+                                     GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                     GTK_MESSAGE_INFO,
+                                     GTK_BUTTONS_OK,
+                                     "PA calibration loaded");
+      } else {
+        msg = gtk_message_dialog_new(GTK_WINDOW(dialog),
+                                     GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                     GTK_MESSAGE_ERROR,
+                                     GTK_BUTTONS_OK,
+                                     "ERROR: PA calibration not loaded\nReason: Device_ID mismatch"
+                                    );
+      }
+      gtk_window_set_transient_for(GTK_WINDOW(msg), GTK_WINDOW(dialog));
+      gtk_window_set_position(GTK_WINDOW(msg), GTK_WIN_POS_CENTER_ON_PARENT);
+      gtk_dialog_run(GTK_DIALOG(msg));
+      gtk_widget_destroy(msg);
+      g_free(filename);
+    }
+  }
+  g_object_unref(native);
+}
+
+static void load_cb(GtkWidget *widget, gpointer user_data) {
+  GtkFileChooserNative *native;
+  GtkFileFilter *filter;
+  native = gtk_file_chooser_native_new("Import deskHPSDR PA Calibration",
+                                       GTK_WINDOW(dialog),
+                                       GTK_FILE_CHOOSER_ACTION_OPEN,
+                                       "_Open",
+                                       "_Cancel");
+  if (*workdir) {
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(native), workdir);
+  }
+  filter = gtk_file_filter_new();
+  gtk_file_filter_set_name(filter, "PA Calibration (*.props)");
+  gtk_file_filter_add_pattern(filter, "*.props");
+  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(native), filter);
+  g_signal_connect(native,
+                   "response",
+                   G_CALLBACK(pa_calibration_load_native_response_cb),
+                   NULL);
+  gtk_native_dialog_show(GTK_NATIVE_DIALOG(native));
+}
+
+void pa_menu(GtkWidget *parent) {
+  memset(pa_r_spin, 0, sizeof(pa_r_spin));
+  dialog = gtk_dialog_new();
+  gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(parent));
+  win_set_bgcolor(dialog, &mwin_bgcolor);
+  GtkWidget *headerbar = gtk_header_bar_new();
+  gtk_window_set_titlebar(GTK_WINDOW(dialog), headerbar);
+  gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(headerbar), TRUE);
+  char _title[32];
+  snprintf(_title, 32, "%s - PA Calibration", PGNAME);
+  gtk_header_bar_set_title(GTK_HEADER_BAR(headerbar), _title);
+  g_signal_connect(dialog, "delete_event", G_CALLBACK(close_cb), NULL);
+  g_signal_connect(dialog, "destroy", G_CALLBACK(destroy_cb), NULL);
+  GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+  GtkWidget *notebook = gtk_notebook_new();
+  GtkWidget *grid0 = gtk_grid_new();
+  /* Ensure the notebook area itself is painted with the desired background */
+  win_set_bgcolor(notebook, &mwin_bgcolor);
+  gtk_widget_set_hexpand(notebook, TRUE);
+  gtk_widget_set_vexpand(notebook, TRUE);
+  gtk_grid_set_column_spacing(GTK_GRID(grid0), 10);
+  GtkWidget *close_b = gtk_button_new_with_label("Close");
+  gtk_widget_set_name(close_b, "close_button");
+  g_signal_connect(close_b, "clicked", G_CALLBACK(close_cb), NULL);
+  gtk_grid_attach(GTK_GRID(grid0), close_b, 0, 0, 1, 1);
+  GtkWidget *max_power_label = gtk_label_new("MAX Power");
+  gtk_widget_set_name(max_power_label, "boldlabel");
+  gtk_grid_attach(GTK_GRID(grid0), max_power_label, 1, 0, 1, 1);
+  GtkWidget *max_power_b = gtk_combo_box_text_new();
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "1W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "5W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "10W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "15W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "20W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "25W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "30W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "50W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "100W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "200W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "500W");
+  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(max_power_b), NULL, "1KW");
+  gtk_combo_box_set_active(GTK_COMBO_BOX(max_power_b), pa_power);
+  my_combo_attach(GTK_GRID(grid0), max_power_b, 2, 0, 1, 1);
+  g_signal_connect(max_power_b, "changed", G_CALLBACK(max_power_changed_cb), NULL);
+  GtkWidget *tx_out_of_band_b = gtk_check_button_new_with_label("Transmit out of band");
+  gtk_widget_set_name(tx_out_of_band_b, "boldlabel");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(tx_out_of_band_b), tx_out_of_band_allowed);
+  gtk_widget_show(tx_out_of_band_b);
+  gtk_grid_attach(GTK_GRID(grid0), tx_out_of_band_b, 3, 0, 1, 1);
+  g_signal_connect(tx_out_of_band_b, "toggled", G_CALLBACK(tx_out_of_band_cb), NULL);
+  //-------------------------------------------------------------------------------------------
+  GtkWidget *save_b = gtk_button_new_with_label("Save");
+  gtk_widget_set_name(save_b, "close_button");
+  g_signal_connect(save_b, "clicked", G_CALLBACK(save_cb), NULL);
+  gtk_grid_attach(GTK_GRID(grid0), save_b, 4, 0, 1, 1);
+  //-------------------------------------------------------------------------------------------
+  GtkWidget *load_b = gtk_button_new_with_label("Import");
+  gtk_widget_set_name(load_b, "close_button");
+  g_signal_connect(load_b, "clicked", G_CALLBACK(load_cb), NULL);
+  gtk_grid_attach(GTK_GRID(grid0), load_b, 5, 0, 1, 1);
+  //-------------------------------------------------------------------------------------------
+  if (protocol == ORIGINAL_PROTOCOL || protocol == NEW_PROTOCOL) {
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+    win_set_bgcolor(grid, &mwin_bgcolor);
+    gtk_widget_set_hexpand(grid, TRUE);
+    gtk_widget_set_vexpand(grid, TRUE);
+    int bands = radio_max_band();
+    int b = 0;
+    if (tx_out_of_band_allowed) {
+      //
+      // If out-of-band TXing is allowed, we need a PA calibration value
+      // for the "general" band. Note that if out-of-band TX is allowed
+      // while the menu is open, this will not appear (one has to close
+      // and re-open the menu).
+      //
+      BAND *band = band_get_band(bandGen);
+      GtkWidget *band_label = gtk_label_new(band->title);
+      gtk_widget_set_name(band_label, "boldlabel");
+      gtk_widget_show(band_label);
+      gtk_grid_attach(GTK_GRID(grid), band_label, (b / 6) * 2, (b % 6) + 1, 1, 1);
+      GtkWidget *pa_r = gtk_spin_button_new_with_range(38.8, 100.0, 0.1);
+      pa_r_spin[bandGen] = pa_r;
+      gtk_spin_button_set_value(GTK_SPIN_BUTTON(pa_r), (double) band->pa_calibration);
+      gtk_widget_show(pa_r);
+      gtk_grid_attach(GTK_GRID(grid), pa_r, ((b / 6) * 2) + 1, (b % 6) + 1, 1, 1);
+      g_signal_connect(pa_r, "value_changed", G_CALLBACK(pa_value_changed_cb), band);
+      b++;
+    }
+    for (int i = 0; i <= bands; i++) {
+      BAND *band = band_get_band(i);
+      GtkWidget *band_label = gtk_label_new(band->title);
+      gtk_widget_set_name(band_label, "boldlabel");
+      gtk_widget_show(band_label);
+      gtk_grid_attach(GTK_GRID(grid), band_label, (b / 6) * 2, (b % 6) + 1, 1, 1);
+      GtkWidget *pa_r = gtk_spin_button_new_with_range(38.8, 100.0, 0.1);
+      pa_r_spin[i] = pa_r;
+      gtk_spin_button_set_value(GTK_SPIN_BUTTON(pa_r), (double) band->pa_calibration);
+      gtk_widget_show(pa_r);
+      gtk_grid_attach(GTK_GRID(grid), pa_r, ((b / 6) * 2) + 1, (b % 6) + 1, 1, 1);
+      g_signal_connect(pa_r, "value_changed", G_CALLBACK(pa_value_changed_cb), band);
+      b++;
+    }
+    for (int i = BANDS; i < BANDS + XVTRS; i++) {
+      BAND *band = band_get_band(i);
+      if (strlen(band->title) > 0) {
+        GtkWidget *band_label = gtk_label_new(band->title);
+        gtk_widget_set_name(band_label, "boldlabel");
+        gtk_widget_show(band_label);
+        gtk_grid_attach(GTK_GRID(grid), band_label, (b / 6) * 2, (b % 6) + 1, 1, 1);
+        GtkWidget *pa_r = gtk_spin_button_new_with_range(38.8, 100.0, 0.1);
+        pa_r_spin[i] = pa_r;
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(pa_r), (double) band->pa_calibration);
+        gtk_widget_show(pa_r);
+        gtk_grid_attach(GTK_GRID(grid), pa_r, ((b / 6) * 2) + 1, (b % 6) + 1, 1, 1);
+        g_signal_connect(pa_r, "value_changed", G_CALLBACK(pa_value_changed_cb), band);
+        b++;
+      }
+    }
+    if ((device == DEVICE_HERMES_LITE2 || device == NEW_DEVICE_HERMES_LITE2) && !have_radioberry1
+        && !have_radioberry2 && !have_radioberry3) {
+      // Calibrate-Seite: Grid in VBox einbetten und Footer unten anhängen
+      GtkWidget *calib_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+      win_set_bgcolor(calib_page, &mwin_bgcolor);
+      gtk_widget_set_hexpand(calib_page, TRUE);
+      gtk_widget_set_vexpand(calib_page, TRUE);
+      gtk_widget_set_hexpand(grid, TRUE);
+      gtk_widget_set_vexpand(grid, TRUE);
+      gtk_box_pack_start(GTK_BOX(calib_page), grid, TRUE, TRUE, 0);
+      char pa_menu_footer_txt[256];
+      snprintf(pa_menu_footer_txt, sizeof(pa_menu_footer_txt),
+               "Hermes Lite 2 or compatible SDR devices:\n"
+               "1. Set all bands to a value of <38.8> and\n"
+               "   MAX Power to <5W> for full 5W output !\n"
+               "2. Set <PA ENABLE> in the Radio Menu !");
+      GtkWidget *pa_menu_footer = gtk_label_new(pa_menu_footer_txt);
+      gtk_widget_set_name(pa_menu_footer, "boldlabel_red");
+      gtk_widget_set_halign(pa_menu_footer, GTK_ALIGN_CENTER);
+      // gtk_widget_set_halign(pa_menu_footer, GTK_ALIGN_START);  // statt CENTER
+      gtk_widget_set_hexpand(pa_menu_footer, TRUE);
+      gtk_box_pack_start(GTK_BOX(calib_page), pa_menu_footer, FALSE, FALSE, 0);
+      gtk_notebook_append_page(GTK_NOTEBOOK(notebook), calib_page, gtk_label_new("Calibrate"));
+    } else {
+      gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new("Calibrate"));
+    }
+  }
+  calibgrid = gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(calibgrid), 10);
+  win_set_bgcolor(calibgrid, &mwin_bgcolor);
+  gtk_widget_set_hexpand(calibgrid, TRUE);
+  gtk_widget_set_vexpand(calibgrid, TRUE);
+  new_calib(FALSE);
+  gtk_notebook_append_page(GTK_NOTEBOOK(notebook), calibgrid, gtk_label_new("Watt Meter Calibrate"));
+  gtk_grid_attach(GTK_GRID(grid0), notebook, 0, 1, 6, 1);
+  gtk_container_add(GTK_CONTAINER(content), grid0);
+  sub_menu = dialog;
+  gtk_widget_show_all(dialog);
+}

@@ -1,0 +1,58 @@
+/* Copyright (C)
+*
+* 2024,2025 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+#ifndef _TOOLSET_H
+#define _TOOLSET_H
+
+#pragma once
+#include "radio.h"      // bringt TRANSMITTER-Typ
+
+#define WEAKEN(w)  g_object_add_weak_pointer(G_OBJECT((w)), (gpointer*)&(w))
+#define UNWEAKEN(w)  if (w) g_object_remove_weak_pointer(G_OBJECT((w)), (gpointer*)&(w))
+
+extern int sunspots;
+extern int a_index;
+extern int k_index;
+extern int solar_flux;
+extern float muf;
+extern int es6_status;
+extern char geomagfield[32];
+extern char xray[16];
+
+extern void toolset_init(void);
+extern void get_screen_size(int *width, int *height);
+extern void get_window_position(GtkWindow *window, int *x, int *y);
+extern void get_window_geometry(GtkWindow *widget, int *x, int *y, int *width, int *height);
+extern int is_pi(void);
+extern int https_ok(const char *hostname, int mit_cert_check);
+extern void check_and_run(int is_dbg);
+extern const char *truncate_text(const char *text, size_t max_length);
+extern char *truncate_text_malloc(const char *text, size_t max_length);
+extern char *truncate_text_3p(const char *text, size_t max_length);
+extern gboolean check_and_run_idle_cb(gpointer data);
+extern void to_uppercase(char *str);
+extern int file_present(const char *filename);
+extern const char *extract_short_msg(const char *msg);
+extern void sort_cfc(TRANSMITTER *tx);
+extern void sort_tx_eq(TRANSMITTER *tx);
+#ifdef __APPLE__
+  extern int get_macos_major_version(void);
+#endif
+
+#endif // _TOOLSET_H

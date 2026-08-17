@@ -1,0 +1,306 @@
+/* Copyright (C)
+* 2021 - John Melton, G0ORX/N6LYT
+* 2024,2025 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This source code has been forked and was adapted from piHPSDR by DL1YCF to deskHPSDR in October 2024
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+#ifndef _ACTION_H_
+#define _ACTION_H_
+
+enum ACTION {
+  NO_ACTION = 0,
+  A_SWAP_B,
+  B_TO_A,
+  A_TO_B,
+  AF_GAIN,
+  AF_GAIN_RX1,
+  AF_GAIN_RX2,
+  AGC,
+  AGC_GAIN,
+  AGC_GAIN_RX1,
+  AGC_GAIN_RX2,
+  ATU_WIN,
+  MENU_AGC,
+  ANF,
+  ATTENUATION,
+  BAND_10,
+  BAND_12,
+  BAND_1240,
+  BAND_136,
+  BAND_144,
+  BAND_15,
+  BAND_160,
+  BAND_17,
+  BAND_20,
+  BAND_220,
+  BAND_2300,
+  BAND_30,
+  BAND_8,
+  BAND_40,
+  BAND_430,
+  BAND_6,
+  BAND_60,
+  BAND_70,
+  BAND_80,
+  BAND_902,
+  BAND_AIR,
+  BAND_GEN,
+  BAND_MINUS,
+  BAND_PLUS,
+  BAND_WWV,
+  BANDSTACK_MINUS,
+  BANDSTACK_PLUS,
+  BI_NAURAL,
+  MENU_BAND,
+  MENU_BANDSTACK,
+  CAPTURE,
+  COMP_ENABLE,
+  COMPRESSION,
+  CTUN,
+  CW_AUDIOPEAKFILTER,
+  CW_FREQUENCY,
+  CW_LEFT,
+  CW_RIGHT,
+  CW_SPEED,
+  CW_KEYER_KEYDOWN,
+  CW_KEYER_PTT,
+  CW_KEYER_SPEED,
+  CW_STRAIGHT_KEY,
+  CW_ZERO_BEAT,
+  DIV,
+  DIV_GAIN,
+  DIV_GAIN_COARSE,
+  DIV_GAIN_FINE,
+  DIV_PHASE,
+  DIV_PHASE_COARSE,
+  DIV_PHASE_FINE,
+  MENU_DIVERSITY,
+  DUPLEX,
+  DIGU_OFFSET,
+  DIGL_OFFSET,
+  DXC_WIN,
+  DXC_TEST,
+  FILTER_MINUS,
+  FILTER_PLUS,
+  FILTER_CUT_LOW,
+  FILTER_CUT_HIGH,
+  FILTER_CUT_DEFAULT,
+  F_SCREEN,
+  MENU_FILTER,
+  FUNCTION,
+  FUNCTIONREV,
+  GL_WIN,
+  IF_SHIFT,
+  IF_SHIFT_RX1,
+  IF_SHIFT_RX2,
+  IF_WIDTH,
+  IF_WIDTH_RX1,
+  IF_WIDTH_RX2,
+  LINEIN_GAIN,
+  LOCK,
+  MENU_MAIN,
+  MENU_MEMORY,
+  MIC_GAIN,
+  MNF,
+  MNF_CENTER,
+  MNF_BW,
+  MODE_MINUS,
+  MODE_PLUS,
+  MENU_MODE,
+  MOX,
+  MULTI_ENC,
+  MULTI_SELECT,
+  MULTI_BUTTON,
+  MUTE_AUDIO,
+  MUTE_RX,
+  MUTE_RX1,
+  MUTE_RX2,
+  NB,
+  NR,
+  MENU_NOISE,
+  NUMPAD_0,
+  NUMPAD_1,
+  NUMPAD_2,
+  NUMPAD_3,
+  NUMPAD_4,
+  NUMPAD_5,
+  NUMPAD_6,
+  NUMPAD_7,
+  NUMPAD_8,
+  NUMPAD_9,
+  NUMPAD_BS,
+  NUMPAD_CL,
+  NUMPAD_DEC,
+  NUMPAD_KHZ,
+  NUMPAD_MHZ,
+  NUMPAD_ENTER,
+  PAN,
+  PAN_MINUS,
+  PAN_PLUS,
+  PANADAPTER_HIGH,
+  PANADAPTER_LOW,
+  PANADAPTER_STEP,
+  PREAMP,
+  PS,
+  MENU_PS,
+  PTT,
+  QSPLT,
+  RCL0,
+  RCL1,
+  RCL2,
+  RCL3,
+  RCL4,
+  RCL5,
+  RCL6,
+  RCL7,
+  RCL8,
+  RCL9,
+  REPLAY,
+  VOICE_KEYER,
+  VK_REPLAY,
+  VK_PLAYBACK,
+  VK_PLAY_SLOT_1,
+  VK_PLAY_SLOT_2,
+  VK_PLAY_SLOT_3,
+  VK_PLAY_SLOT_4,
+  VK_PLAY_SLOT_5,
+  VK_PLAY_SLOT_6,
+  VK_STOP,
+  RF_GAIN,
+  RF_GAIN_RX1,
+  RF_GAIN_RX2,
+  RIT,
+  RIT_CLEAR,
+  RIT_ENABLE,
+  RIT_MINUS,
+  RIT_PLUS,
+  RIT_RX1,
+  RIT_RX2,
+  RIT_STEP,
+  RITXIT,
+  RITSELECT,
+  RITXIT_CLEAR,
+  RSAT,
+  MENU_RX,
+  RX1,
+  RX2,
+  SAT,
+  EXIT_APP,
+  SNB,
+  SPLIT,
+  SQUELCH,
+  SQUELCH_RX1,
+  SQUELCH_RX2,
+  SWAP_RX,
+  TOOLBAR1,
+  TOOLBAR2,
+  TOOLBAR3,
+  TOOLBAR4,
+  TOOLBAR5,
+  TOOLBAR6,
+  TOOLBAR7,
+  TOOLBAR8,
+  TUNE,
+  TUNE_T,
+  TUNE_IOB,
+  TUNE_DRIVE,
+  TUNE_FULL,
+  TUNE_MEMORY,
+#ifdef __AH4IOB__
+  AH4_RUN,
+  AH4_BYP,
+#endif
+  DRIVE,
+  TWO_TONE,
+  MENU_TX,
+  VFO,
+  VFO_FIX,
+  MENU_FREQUENCY,
+  VFO_STEP_MINUS,
+  VFO_STEP_PLUS,
+  VFOA,
+  VFOB,
+  VOX,
+  VOXLEVEL,
+  WATERFALL_HIGH,
+  WATERFALL_LOW,
+  XIT,
+  XIT_CLEAR,
+  XIT_ENABLE,
+  XIT_MINUS,
+  XIT_PLUS,
+  ZOOM,
+  ZOOM_MINUS,
+  ZOOM_PLUS,
+  XVTR_1,
+  XVTR_2,
+  XVTR_3,
+  XVTR_4,
+  XVTR_5,
+  XVTR_6,
+  XVTR_7,
+  XVTR_8,
+  XVTR_9,
+  XVTR_10,
+  ACTIONS
+};
+
+enum ACTIONtype {
+  TYPE_NONE = 0,
+  MIDI_KEY = 1,             // MIDI Button (press event)
+  MIDI_KNOB = 2,            // MIDI Knob   (value between 0 and 100)
+  MIDI_WHEEL = 4,           // MIDI Wheel  (direction and speed)
+  TYPE_HIDE = 32,
+  TYPE_HIDE_TOOLBAR = 64
+};
+
+typedef struct _action_table {
+  enum ACTION action;
+  const char *str;              // desciptive text
+  const char *button_str;       // short button text, also used in props files
+  enum ACTIONtype type;
+} ACTION_TABLE;
+
+typedef struct _multi_table {
+  enum ACTION action;
+  const char *descr;            // short text without captialization
+} MULTI_TABLE;
+
+enum ACTION_MODE {
+  RELATIVE,
+  ABSOLUTE,
+  PRESSED,
+  RELEASED
+};
+
+typedef struct process_action {
+  enum ACTION action;
+  enum ACTION_MODE mode;
+  int val;
+} PROCESS_ACTION;
+
+extern ACTION_TABLE ActionTable[ACTIONS + 1];
+extern int is_cap;
+
+extern int process_action (void *data);
+extern void schedule_action (enum ACTION action, enum ACTION_MODE mode, int val);
+extern void Action2String (const int id, char *str, size_t len);
+extern int  String2Action (const char *str);
+extern void GetMultifunctionString (char *str, size_t len);
+extern int  GetMultifunctionStatus (void);
+#endif

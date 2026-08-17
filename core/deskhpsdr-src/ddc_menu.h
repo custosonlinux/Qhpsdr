@@ -1,0 +1,31 @@
+/*  Copyright (C)
+*   2026 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+#ifndef _DDC_MENU_H
+#define _DDC_MENU_H
+
+#include <gtk/gtk.h>
+
+#define P2_MAX_DDCS 7
+
+extern int p2_ddc_adc_map[P2_MAX_DDCS];
+
+extern void ddc_menu(GtkWidget *parent);
+extern void ddc_menu_set_defaults_hermes(void);
+
+#endif

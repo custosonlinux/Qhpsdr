@@ -1,0 +1,54 @@
+/* Copyright (C)
+* 2015 - John Melton, G0ORX/N6LYT
+* 2024,2025 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This source code has been forked and was adapted from piHPSDR by DL1YCF to deskHPSDR in October 2024
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+#ifndef _OLD_PROTOCOL_H
+#define _OLD_PROTOCOL_H
+
+#include <stdint.h>
+
+// extern int hl2_iob_present;
+extern int hl2_pico_present;
+int hl2_iob_is_present(void);
+int hl2_pico_is_present(void);
+
+extern void hl2_iob_set_antenna_tuner(unsigned char value);
+extern unsigned char hl2_iob_get_antenna_tuner_status(void);
+extern unsigned char hl2_iob_get_lpf_status(void);
+extern const char *hl2_iob_get_lpf_status_str(void);
+
+#ifdef __AH4IOB__
+  extern int hl2_pa_enable_suppressed;
+#endif
+
+extern void old_protocol_stop(void);
+extern void old_protocol_run(void);
+
+extern void old_protocol_init(int rate);
+extern void old_protocol_set_mic_sample_rate(int rate);
+
+extern void old_protocol_audio_samples(short left_audio_sample, short right_audio_sample);
+extern void old_protocol_iq_samples(int isample, int qsample, int side);
+extern uint64_t old_protocol_tx_fence_begin(void);
+extern int old_protocol_tx_fence_complete(uint64_t fence);
+#ifdef __APPLE__
+  extern void old_protocol_update_timing(void);
+#endif
+#endif

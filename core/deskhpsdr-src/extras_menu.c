@@ -1,0 +1,578 @@
+/*  Copyright (C)
+*   2024,2025 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+#include <gtk/gtk.h>
+#include <semaphore.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "main.h"
+#include "new_menu.h"
+#include "radio.h"
+#include "message.h"
+#include "rx_panadapter.h"
+#include "rbn.h"
+
+static GtkWidget *dialog = NULL;
+static gulong dxc_login_box_signal_id;
+static gulong dxc_address_box_signal_id;
+static gulong rbn_address_box_signal_id;
+static gulong atuwin_title_box_signal_id;
+static gulong atuwin_url_box_signal_id;
+static gulong atuwin_action_box_signal_id;
+
+static void cleanup(void) {
+  if (dialog != NULL) {
+    GtkWidget *tmp = dialog;
+    dialog = NULL;
+    gtk_widget_destroy(tmp);
+    sub_menu = NULL;
+    active_menu  = NO_MENU;
+    radio_save_state();
+  }
+}
+
+static gboolean delete_event_cb(GtkWidget *widget, GdkEvent *event, gpointer data) {
+  cleanup();
+  return TRUE;
+}
+
+static void destroy_cb(GtkWidget *widget, gpointer data) {
+  dialog = NULL;
+  sub_menu = NULL;
+  active_menu = NO_MENU;
+}
+
+static void close_button_clicked_cb(GtkButton *button, gpointer data) {
+  cleanup();
+}
+
+static void atuwin_action_button_clicked(GtkWidget *widget, gpointer data) {
+  GtkEntry *atuwin_action_box = GTK_ENTRY(data);
+  const gchar *text = gtk_entry_get_text(atuwin_action_box);
+  gsize len = text ? strlen(text) : 0;
+  if (text && len >= 1 && len < sizeof(atuwin_ACTION)) {
+    gchar *upper = g_ascii_strup(text, -1);  // oder g_strup(text)
+    g_strlcpy(atuwin_ACTION, upper, sizeof(atuwin_ACTION));
+    g_free(upper);
+  } else {
+    g_signal_handler_block(atuwin_action_box, atuwin_action_box_signal_id);
+    gtk_entry_set_text(atuwin_action_box, atuwin_ACTION);
+    g_signal_handler_unblock(atuwin_action_box, atuwin_action_box_signal_id);
+  }
+  gtk_widget_queue_draw(GTK_WIDGET(atuwin_action_box));
+  // optional: cleanup() / close_cb() wenn Save + Close gewünscht ist
+  cleanup();
+}
+
+static void atuwin_url_button_clicked(GtkWidget *widget, gpointer data) {
+  GtkEntry *atuwin_url_box = GTK_ENTRY(data);
+  const gchar *text = gtk_entry_get_text(atuwin_url_box);
+  gsize len = text ? strlen(text) : 0;
+  if (text && len >= 1 && len < sizeof(atuwin_URL)) {
+    g_strlcpy(atuwin_URL, text, sizeof(atuwin_URL));
+  } else {
+    g_signal_handler_block(atuwin_url_box, atuwin_url_box_signal_id);
+    gtk_entry_set_text(atuwin_url_box, atuwin_URL);
+    g_signal_handler_unblock(atuwin_url_box, atuwin_url_box_signal_id);
+  }
+  gtk_widget_queue_draw(GTK_WIDGET(atuwin_url_box));
+  // optional: cleanup() / close_cb() wenn Save + Close gewünscht ist
+  cleanup();
+}
+
+static void atuwin_title_button_clicked(GtkWidget *widget, gpointer data) {
+  GtkEntry *atuwin_title_box = GTK_ENTRY(data);
+  const gchar *text = gtk_entry_get_text(atuwin_title_box);
+  gsize len = text ? strlen(text) : 0;
+  if (text && len >= 1 && len < sizeof(atuwin_TITLE)) {
+    g_strlcpy(atuwin_TITLE, text, sizeof(atuwin_TITLE));
+  } else {
+    g_signal_handler_block(atuwin_title_box, atuwin_title_box_signal_id);
+    gtk_entry_set_text(atuwin_title_box, atuwin_TITLE);
+    g_signal_handler_unblock(atuwin_title_box, atuwin_title_box_signal_id);
+  }
+  gtk_widget_queue_draw(GTK_WIDGET(atuwin_title_box));
+  // optional: cleanup() / close_cb() wenn Save + Close gewünscht ist
+  cleanup();
+}
+
+static void dxc_address_button_clicked(GtkWidget *widget, gpointer data) {
+  GtkEntry *dxc_address_box = GTK_ENTRY(data);
+  const gchar *text = gtk_entry_get_text(dxc_address_box);
+  gsize len = text ? strlen(text) : 0;
+  if (text && len >= 1 && len < sizeof(dxc_address)) {
+    g_strlcpy(dxc_address, text, sizeof(dxc_address));
+  } else {
+    g_signal_handler_block(dxc_address_box, dxc_address_box_signal_id);
+    gtk_entry_set_text(dxc_address_box, dxc_address);
+    g_signal_handler_unblock(dxc_address_box, dxc_address_box_signal_id);
+  }
+  gtk_widget_queue_draw(GTK_WIDGET(dxc_address_box));
+  // optional: cleanup() / close_cb() wenn Save + Close gewünscht ist
+  cleanup();
+}
+
+static void dxc_login_button_clicked(GtkWidget *widget, gpointer data) {
+  GtkEntry *dxc_login_box = GTK_ENTRY(data);
+  const gchar *text = gtk_entry_get_text(dxc_login_box);
+  gsize len = text ? strlen(text) : 0;
+  if (text && len >= 3 && len < sizeof(dxc_login)) {
+    gchar *upper = g_ascii_strup(text, -1);  // oder g_strup(text)
+    g_strlcpy(dxc_login, upper, sizeof(dxc_login));
+    g_free(upper);
+  } else {
+    g_signal_handler_block(dxc_login_box, dxc_login_box_signal_id);
+    gtk_entry_set_text(dxc_login_box, dxc_login);
+    g_signal_handler_unblock(dxc_login_box, dxc_login_box_signal_id);
+  }
+  gtk_widget_queue_draw(GTK_WIDGET(dxc_login_box));
+  // optional: cleanup() / close_cb() wenn Save + Close gewünscht ist
+  cleanup();
+}
+
+static void dxc_port_spin_btn_changed_cb(GtkSpinButton *spin, gpointer user_data) {
+  dxc_port = gtk_spin_button_get_value_as_int(spin);
+  /* Sicherheitsnetz */
+  if (dxc_port < 1) {
+    dxc_port = 1;
+  } else if (dxc_port > 65535) {
+    dxc_port = 65535;
+  }
+}
+
+static void rbn_enable_toggle_cb(GtkToggleButton *toggle, gpointer user_data) {
+  rbn_enabled = gtk_toggle_button_get_active(toggle) ? 1 : 0;
+  rbn_update_from_settings();
+}
+
+static void rbn_cw_toggle_cb(GtkToggleButton *toggle, gpointer user_data) {
+  rbn_filter_cw = gtk_toggle_button_get_active(toggle) ? 1 : 0;
+}
+
+static void rbn_rtty_toggle_cb(GtkToggleButton *toggle, gpointer user_data) {
+  rbn_filter_rtty = gtk_toggle_button_get_active(toggle) ? 1 : 0;
+}
+
+static void rbn_cq_toggle_cb(GtkToggleButton *toggle, gpointer user_data) {
+  rbn_filter_cq = gtk_toggle_button_get_active(toggle) ? 1 : 0;
+}
+
+static void rbn_address_button_clicked(GtkWidget *widget, gpointer data) {
+  GtkEntry *rbn_address_box = GTK_ENTRY(data);
+  const gchar *text = gtk_entry_get_text(rbn_address_box);
+  gsize len = text ? strlen(text) : 0;
+  if (text && len >= 1 && len < sizeof(rbn_address)) {
+    g_strlcpy(rbn_address, text, sizeof(rbn_address));
+  } else {
+    g_signal_handler_block(rbn_address_box, rbn_address_box_signal_id);
+    gtk_entry_set_text(rbn_address_box, rbn_address);
+    g_signal_handler_unblock(rbn_address_box, rbn_address_box_signal_id);
+  }
+  gtk_widget_queue_draw(GTK_WIDGET(rbn_address_box));
+  rbn_update_from_settings();
+  cleanup();
+}
+
+static void rbn_port_spin_btn_changed_cb(GtkSpinButton *spin, gpointer user_data) {
+  rbn_port = gtk_spin_button_get_value_as_int(spin);
+  if (rbn_port < 1) {
+    rbn_port = 1;
+  } else if (rbn_port > 65535) {
+    rbn_port = 65535;
+  }
+  rbn_update_from_settings();
+}
+
+static void dxspot_lifetime_spin_btn_cb(GtkSpinButton *spin, gpointer user_data) {
+  pan_spot_lifetime_min = gtk_spin_button_get_value_as_int(spin);
+  /* Sicherheitsnetz */
+  if (pan_spot_lifetime_min < 1) {
+    pan_spot_lifetime_min = 1;
+  } else if (pan_spot_lifetime_min > 720) {
+    pan_spot_lifetime_min = 720;
+  }
+}
+
+static void dxspot_max_rows_spin_btn_cb(GtkSpinButton *spin, gpointer user_data) {
+  int val = gtk_spin_button_get_value_as_int(spin);
+  panadapter_set_max_label_rows(val);
+}
+
+static void dxspot_active_rx_only_cb(GtkToggleButton *button, gpointer user_data) {
+  dx_spots_active_rx_only = gtk_toggle_button_get_active(button);
+}
+
+static void atuwin_w_spin_btn_changed_cb(GtkSpinButton *spin, gpointer user_data) {
+  atuwin_wv_w = gtk_spin_button_get_value_as_int(spin);
+  /* Sicherheitsnetz */
+  if (atuwin_wv_w < 400) {
+    atuwin_wv_w = 400;
+  } else if (atuwin_wv_w > 9999) {
+    atuwin_wv_w = 9999;
+  }
+}
+
+static void atuwin_h_spin_btn_changed_cb(GtkSpinButton *spin, gpointer user_data) {
+  atuwin_wv_h = gtk_spin_button_get_value_as_int(spin);
+  /* Sicherheitsnetz */
+  if (atuwin_wv_h < 400) {
+    atuwin_wv_h = 400;
+  } else if (atuwin_wv_h > 9999) {
+    atuwin_wv_h = 9999;
+  }
+}
+
+void extras_menu(GtkWidget *parent) {
+  dialog = gtk_dialog_new();
+  gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(parent));
+  win_set_bgcolor(dialog, &mwin_bgcolor);
+  GtkWidget *headerbar = gtk_header_bar_new();
+  gtk_window_set_titlebar(GTK_WINDOW(dialog), headerbar);
+  gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(headerbar), TRUE);
+  char _title[64];
+  snprintf(_title, 64, "%s - Extras", PGNAME);
+  gtk_header_bar_set_title(GTK_HEADER_BAR(headerbar), _title);
+  g_signal_connect(dialog, "delete-event", G_CALLBACK(delete_event_cb), NULL);
+  g_signal_connect(dialog, "destroy", G_CALLBACK(destroy_cb), NULL);
+  GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+  GtkWidget *grid = gtk_grid_new();
+  gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+  //--------------------------------------------------------------------------------
+  int row = 0;
+  int col = 0;
+  GtkWidget *close_b = gtk_button_new_with_label("Close");
+  gtk_widget_set_name(close_b, "close_button");
+  g_signal_connect(close_b, "clicked", G_CALLBACK(close_button_clicked_cb), NULL);
+  gtk_grid_attach(GTK_GRID(grid), close_b, col, row, 2, 1);
+  row++;
+  col = 0;
+  GtkWidget *t_label = gtk_label_new(NULL);
+  gtk_label_set_use_markup(GTK_LABEL(t_label), TRUE);
+  gtk_label_set_markup(GTK_LABEL(t_label), "<u>Telnet DX Cluster Window Setup</u>");
+  gtk_widget_set_name(t_label, "boldlabel_blue");
+  gtk_widget_set_margin_top(t_label, 10);
+  gtk_widget_set_margin_bottom(t_label, 10);
+  gtk_widget_set_halign(t_label, GTK_ALIGN_START);
+  gtk_widget_set_margin_start(t_label, 5);
+  gtk_grid_attach(GTK_GRID(grid), t_label, col, row, 3, 1);
+  row++;
+  //--------------------------------------------------------------------------------
+  // Komplette DX-Cluster-Zeile als horizontale Box
+  GtkWidget *dxc_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_set_hexpand(dxc_box, TRUE);
+  gtk_widget_set_halign(dxc_box, GTK_ALIGN_FILL);
+  // DXC Login
+  GtkWidget *label = gtk_label_new("DXC Login:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(dxc_box), label, FALSE, FALSE, 0);
+  GtkWidget *dxc_login_box = gtk_entry_new();
+  gtk_entry_set_max_length(GTK_ENTRY(dxc_login_box), sizeof(dxc_login) - 1);
+  gtk_entry_set_text(GTK_ENTRY(dxc_login_box), dxc_login);
+  gtk_widget_set_size_request(dxc_login_box, 100, -1);
+  gtk_box_pack_start(GTK_BOX(dxc_box), dxc_login_box, FALSE, FALSE, 0);
+  dxc_login_box_signal_id = g_signal_connect(dxc_login_box, "activate", G_CALLBACK(dxc_login_button_clicked),
+    dxc_login_box);
+  GtkWidget *dxc_login_box_btn = gtk_button_new_with_label("Set");
+  gtk_box_pack_start(GTK_BOX(dxc_box), dxc_login_box_btn, FALSE, FALSE, 0);
+  g_signal_connect(dxc_login_box_btn, "clicked", G_CALLBACK(dxc_login_button_clicked), dxc_login_box);
+  // DXC Address
+  label = gtk_label_new("DXC Address:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(dxc_box), label, FALSE, FALSE, 0);
+  GtkWidget *dxc_address_box = gtk_entry_new();
+  gtk_entry_set_max_length(GTK_ENTRY(dxc_address_box), sizeof(dxc_address) - 1);
+  gtk_entry_set_text(GTK_ENTRY(dxc_address_box), dxc_address);
+  gtk_widget_set_hexpand(dxc_address_box, TRUE);
+  gtk_box_pack_start(GTK_BOX(dxc_box), dxc_address_box, TRUE, TRUE, 0);
+  dxc_address_box_signal_id = g_signal_connect(dxc_address_box, "activate", G_CALLBACK(dxc_address_button_clicked),
+    dxc_address_box);
+  GtkWidget *dxc_address_box_btn = gtk_button_new_with_label("Set");
+  gtk_box_pack_start(GTK_BOX(dxc_box), dxc_address_box_btn, FALSE, FALSE, 0);
+  g_signal_connect(dxc_address_box_btn, "clicked", G_CALLBACK(dxc_address_button_clicked), dxc_address_box);
+  // DXC Port
+  label = gtk_label_new("DXC Port:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(dxc_box), label, FALSE, FALSE, 0);
+  GtkAdjustment *dxc_port_adj =
+          gtk_adjustment_new(dxc_port,
+                             1,
+                             65535,
+                             1,
+                             10,
+                             0);
+  GtkWidget *dxc_port_spin_btn = gtk_spin_button_new(dxc_port_adj, 1.0, 0);
+  gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(dxc_port_spin_btn), TRUE);
+  gtk_box_pack_start(GTK_BOX(dxc_box), dxc_port_spin_btn, FALSE, FALSE, 0);
+  g_signal_connect(dxc_port_spin_btn, "value-changed", G_CALLBACK(dxc_port_spin_btn_changed_cb), NULL);
+  // Die komplette Box in das bestehende Grid einsetzen.
+  // Sie belegt hier acht bisherige Spalten.
+  gtk_grid_attach(GTK_GRID(grid), dxc_box, 0, row, 8, 1);
+  //--------------------------------------------------------------------------------
+  row++;
+  col = 0;
+  t_label = gtk_label_new(NULL);
+  gtk_label_set_use_markup(GTK_LABEL(t_label), TRUE);
+  gtk_label_set_markup(GTK_LABEL(t_label), "<u>DX Spots on RX Panadapter Setup</u>");
+  gtk_widget_set_name(t_label, "boldlabel_blue");
+  gtk_widget_set_margin_top(t_label, 10);
+  gtk_widget_set_margin_bottom(t_label, 10);
+  gtk_widget_set_halign(t_label, GTK_ALIGN_START);
+  gtk_widget_set_margin_start(t_label, 5);
+  gtk_grid_attach(GTK_GRID(grid), t_label, col, row, 3, 1);
+  //--------------------------------------------------------------------------------
+  row++;
+  // DX spot display settings as horizontal box
+  GtkWidget *dxspot_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_set_hexpand(dxspot_box, TRUE);
+  gtk_widget_set_halign(dxspot_box, GTK_ALIGN_START);
+  // DX Spots Lifetime
+  label = gtk_label_new("DX Spots\nLifetime:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(dxspot_box), label, FALSE, FALSE, 0);
+  GtkAdjustment *dxspot_lifetime_adj =
+          gtk_adjustment_new(pan_spot_lifetime_min,
+                             1,
+                             720,
+                             1,
+                             10,
+                             0);
+  GtkWidget *dxspot_lifetime_spin_btn = gtk_spin_button_new(dxspot_lifetime_adj, 1.0, 0);
+  gtk_widget_set_tooltip_text(dxspot_lifetime_spin_btn,
+                              "DX spot lifetime (minutes) before removal from the RX panadapter.\n\n"
+                              "min: 1min\n"
+                              "max: 720min (12h)\n"
+                              "default: 15min");
+  gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(dxspot_lifetime_spin_btn), TRUE);
+  gtk_box_pack_start(GTK_BOX(dxspot_box), dxspot_lifetime_spin_btn, FALSE, FALSE, 0);
+  g_signal_connect(dxspot_lifetime_spin_btn, "value-changed", G_CALLBACK(dxspot_lifetime_spin_btn_cb), NULL);
+  // DX Spots Maximum Rows
+  label = gtk_label_new("DX Spots\nmax. rows:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(dxspot_box), label, FALSE, FALSE, 0);
+  GtkAdjustment *dxspot_max_rows_adj =
+          gtk_adjustment_new(max_pan_label_rows,
+                             1,
+                             32,
+                             1,
+                             10,
+                             0);
+  GtkWidget *dxspot_max_rows_spin_btn = gtk_spin_button_new(dxspot_max_rows_adj, 1.0, 0);
+  gtk_widget_set_tooltip_text(dxspot_max_rows_spin_btn,
+                              "Max stacked label rows (RX panadapter).\n\n"
+                              "min: 1 row\n"
+                              "max: 32 rows\n"
+                              "default: 6 rows");
+  gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(dxspot_max_rows_spin_btn), TRUE);
+  gtk_box_pack_start(GTK_BOX(dxspot_box), dxspot_max_rows_spin_btn, FALSE, FALSE, 0);
+  g_signal_connect(dxspot_max_rows_spin_btn, "value-changed", G_CALLBACK(dxspot_max_rows_spin_btn_cb), NULL);
+  GtkWidget *dxspot_active_rx_only_btn = gtk_check_button_new_with_label("Show spots only on active RX");
+  gtk_widget_set_name(dxspot_active_rx_only_btn, "boldlabel_blue");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(dxspot_active_rx_only_btn), dx_spots_active_rx_only);
+  gtk_widget_set_tooltip_text(dxspot_active_rx_only_btn,
+                              "Show DX/TCI/RBN spot labels only on the active RX panadapter.\n\n"
+                              "Disable this to show spots on all RX panadapters whose visible frequency range contains the spot.");
+  gtk_box_pack_start(GTK_BOX(dxspot_box), dxspot_active_rx_only_btn, FALSE, FALSE, 0);
+  g_signal_connect(dxspot_active_rx_only_btn, "toggled", G_CALLBACK(dxspot_active_rx_only_cb), NULL);
+  // Insert the complete box into the existing grid
+  gtk_grid_attach(GTK_GRID(grid), dxspot_box, 0, row, 8, 1);
+  //--------------------------------------------------------------------------------
+  row++;
+  col = 0;
+  t_label = gtk_label_new(NULL);
+  gtk_label_set_use_markup(GTK_LABEL(t_label), TRUE);
+  gtk_label_set_markup(GTK_LABEL(t_label), "<u>Reverse Beacon Network Setup</u>");
+  gtk_widget_set_name(t_label, "boldlabel_blue");
+  gtk_widget_set_margin_top(t_label, 10);
+  gtk_widget_set_margin_bottom(t_label, 10);
+  gtk_widget_set_halign(t_label, GTK_ALIGN_START);
+  gtk_widget_set_margin_start(t_label, 5);
+  gtk_grid_attach(GTK_GRID(grid), t_label, col, row, 3, 1);
+  //--------------------------------------------------------------------------------
+  row++;
+  GtkWidget *rbn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_set_hexpand(rbn_box, TRUE);
+  gtk_widget_set_halign(rbn_box, GTK_ALIGN_START);
+  GtkWidget *rbn_enable_btn = gtk_check_button_new_with_label("Enable RBN spots");
+  gtk_widget_set_name(rbn_enable_btn, "boldlabel_blue");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(rbn_enable_btn), rbn_enabled);
+  gtk_widget_set_tooltip_text(rbn_enable_btn,
+                              "Enable Reverse Beacon Network spots as an additional spot source.\n"
+                              "Only frequency and callsign are forwarded to the RX panadapter.");
+  gtk_box_pack_start(GTK_BOX(rbn_box), rbn_enable_btn, FALSE, FALSE, 0);
+  g_signal_connect(rbn_enable_btn, "toggled", G_CALLBACK(rbn_enable_toggle_cb), NULL);
+  GtkWidget *rbn_cw_btn = gtk_check_button_new_with_label("CW");
+  gtk_widget_set_name(rbn_cw_btn, "boldlabel_blue");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(rbn_cw_btn), rbn_filter_cw);
+  gtk_widget_set_tooltip_text(rbn_cw_btn, "Accept CW spots from RBN.");
+  gtk_box_pack_start(GTK_BOX(rbn_box), rbn_cw_btn, FALSE, FALSE, 0);
+  g_signal_connect(rbn_cw_btn, "toggled", G_CALLBACK(rbn_cw_toggle_cb), NULL);
+  GtkWidget *rbn_rtty_btn = gtk_check_button_new_with_label("RTTY");
+  gtk_widget_set_name(rbn_rtty_btn, "boldlabel_blue");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(rbn_rtty_btn), rbn_filter_rtty);
+  gtk_widget_set_tooltip_text(rbn_rtty_btn, "Accept RTTY spots from RBN.");
+  gtk_box_pack_start(GTK_BOX(rbn_box), rbn_rtty_btn, FALSE, FALSE, 0);
+  g_signal_connect(rbn_rtty_btn, "toggled", G_CALLBACK(rbn_rtty_toggle_cb), NULL);
+  GtkWidget *rbn_cq_btn = gtk_check_button_new_with_label("CQ spots only");
+  gtk_widget_set_name(rbn_cq_btn, "boldlabel_blue");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(rbn_cq_btn), rbn_filter_cq);
+  gtk_widget_set_tooltip_text(rbn_cq_btn, "Accept only RBN spots where the decoded text contains CQ.");
+  gtk_box_pack_start(GTK_BOX(rbn_box), rbn_cq_btn, FALSE, FALSE, 0);
+  g_signal_connect(rbn_cq_btn, "toggled", G_CALLBACK(rbn_cq_toggle_cb), NULL);
+  gtk_grid_attach(GTK_GRID(grid), rbn_box, 0, row, 8, 1);
+  //--------------------------------------------------------------------------------
+  row++;
+  GtkWidget *rbn_address_box_container = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_set_hexpand(rbn_address_box_container, TRUE);
+  gtk_widget_set_halign(rbn_address_box_container, GTK_ALIGN_FILL);
+  label = gtk_label_new("RBN address:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(rbn_address_box_container), label, FALSE, FALSE, 0);
+  GtkWidget *rbn_address_box = gtk_entry_new();
+  gtk_entry_set_max_length(GTK_ENTRY(rbn_address_box), sizeof(rbn_address) - 1);
+  gtk_entry_set_text(GTK_ENTRY(rbn_address_box), rbn_address);
+  gtk_widget_set_hexpand(rbn_address_box, TRUE);
+  gtk_box_pack_start(GTK_BOX(rbn_address_box_container), rbn_address_box, TRUE, TRUE, 0);
+  rbn_address_box_signal_id = g_signal_connect(rbn_address_box, "activate",
+    G_CALLBACK(rbn_address_button_clicked), rbn_address_box);
+  GtkWidget *rbn_address_box_btn = gtk_button_new_with_label("Set");
+  gtk_box_pack_start(GTK_BOX(rbn_address_box_container), rbn_address_box_btn, FALSE, FALSE, 0);
+  g_signal_connect(rbn_address_box_btn, "clicked", G_CALLBACK(rbn_address_button_clicked), rbn_address_box);
+  label = gtk_label_new("RBN Port:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(rbn_address_box_container), label, FALSE, FALSE, 0);
+  GtkAdjustment *rbn_port_adj = gtk_adjustment_new(rbn_port, 1, 65535, 1, 10, 0);
+  GtkWidget *rbn_port_spin_btn = gtk_spin_button_new(rbn_port_adj, 1.0, 0);
+  gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(rbn_port_spin_btn), TRUE);
+  gtk_box_pack_start(GTK_BOX(rbn_address_box_container), rbn_port_spin_btn, FALSE, FALSE, 0);
+  g_signal_connect(rbn_port_spin_btn, "value-changed", G_CALLBACK(rbn_port_spin_btn_changed_cb), NULL);
+  gtk_grid_attach(GTK_GRID(grid), rbn_address_box_container, 0, row, 8, 1);
+  if (dxcwin_open) {
+    gtk_widget_set_sensitive(dxc_login_box, FALSE);
+    gtk_widget_set_sensitive(dxc_login_box_btn, FALSE);
+    gtk_widget_set_sensitive(dxc_address_box, FALSE);
+    gtk_widget_set_sensitive(dxc_address_box_btn, FALSE);
+    gtk_widget_set_sensitive(dxc_port_spin_btn, FALSE);
+    // gtk_widget_set_sensitive(dxspot_lifetime_spin_btn, FALSE);
+    // gtk_widget_set_sensitive(dxspot_max_rows_spin_btn, FALSE);
+  }
+  //--------------------------------------------------------------------------------
+  row++;
+  col = 0;
+  GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+  gtk_widget_set_name(sep, "menu_separator");
+  gtk_widget_set_size_request(sep, -1, 3);
+  gtk_widget_set_margin_top(sep, 10);
+  gtk_widget_set_margin_bottom(sep, 10);
+  gtk_grid_attach(GTK_GRID(grid), sep, col, row, 8, 1);
+  //--------------------------------------------------------------------------------
+  //--------------------------------------------------------------------------------
+  row++;
+  col = 0;
+  t_label = gtk_label_new(NULL);
+  gtk_label_set_use_markup(GTK_LABEL(t_label), TRUE);
+  gtk_label_set_markup(GTK_LABEL(t_label), "<u>User defined Window with Webaccess</u>");
+  gtk_widget_set_name(t_label, "boldlabel_blue");
+  gtk_widget_set_margin_top(t_label, 10);
+  gtk_widget_set_margin_bottom(t_label, 10);
+  gtk_widget_set_halign(t_label, GTK_ALIGN_START);
+  gtk_widget_set_margin_start(t_label, 5);
+  gtk_grid_attach(GTK_GRID(grid), t_label, col, row, 4, 1);
+  row++;
+  GtkWidget *atuwin_top_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_set_hexpand(atuwin_top_box, TRUE);
+  gtk_widget_set_halign(atuwin_top_box, GTK_ALIGN_FILL);
+  label = gtk_label_new("Titlebar:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(atuwin_top_box), label, FALSE, FALSE, 0);
+  GtkWidget *atuwin_title_box = gtk_entry_new();
+  gtk_entry_set_max_length(GTK_ENTRY(atuwin_title_box), sizeof(atuwin_TITLE) - 1);
+  gtk_entry_set_text(GTK_ENTRY(atuwin_title_box), atuwin_TITLE);
+  gtk_box_pack_start(GTK_BOX(atuwin_top_box), atuwin_title_box, FALSE, FALSE, 0);
+  atuwin_title_box_signal_id = g_signal_connect(atuwin_title_box, "activate",
+    G_CALLBACK(atuwin_title_button_clicked), atuwin_title_box);
+  GtkWidget *atuwin_title_box_btn = gtk_button_new_with_label("Set");
+  gtk_box_pack_start(GTK_BOX(atuwin_top_box), atuwin_title_box_btn, FALSE, FALSE, 0);
+  g_signal_connect(atuwin_title_box_btn, "clicked", G_CALLBACK(atuwin_title_button_clicked), atuwin_title_box);
+  label = gtk_label_new("URL:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(atuwin_top_box), label, FALSE, FALSE, 0);
+  GtkWidget *atuwin_url_box = gtk_entry_new();
+  gtk_entry_set_max_length(GTK_ENTRY(atuwin_url_box), sizeof(atuwin_URL) - 1);
+  gtk_entry_set_text(GTK_ENTRY(atuwin_url_box), atuwin_URL);
+  gtk_widget_set_hexpand(atuwin_url_box, TRUE);
+  gtk_box_pack_start(GTK_BOX(atuwin_top_box), atuwin_url_box, TRUE, TRUE, 0);
+  atuwin_url_box_signal_id = g_signal_connect(atuwin_url_box, "activate",
+    G_CALLBACK(atuwin_url_button_clicked), atuwin_url_box);
+  GtkWidget *atuwin_url_box_btn = gtk_button_new_with_label("Set");
+  gtk_box_pack_start(GTK_BOX(atuwin_top_box), atuwin_url_box_btn, FALSE, FALSE, 0);
+  g_signal_connect(atuwin_url_box_btn, "clicked", G_CALLBACK(atuwin_url_button_clicked), atuwin_url_box);
+  gtk_grid_attach(GTK_GRID(grid), atuwin_top_box, 0, row, 8, 1);
+  //--------------------------------------------------------------------------------
+  row++;
+  GtkWidget *atuwin_bottom_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_set_hexpand(atuwin_bottom_box, TRUE);
+  gtk_widget_set_halign(atuwin_bottom_box, GTK_ALIGN_START);
+  gtk_widget_set_margin_top(atuwin_bottom_box, 10);
+  label = gtk_label_new("Window\nWidth:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(atuwin_bottom_box), label, FALSE, FALSE, 0);
+  GtkAdjustment *atuwin_w_adj = gtk_adjustment_new(atuwin_wv_w, 400, 9999, 5, 50, 0);
+  GtkWidget *atuwin_w_spin_btn = gtk_spin_button_new(atuwin_w_adj, 1.0, 0);
+  gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(atuwin_w_spin_btn), TRUE);
+  gtk_box_pack_start(GTK_BOX(atuwin_bottom_box), atuwin_w_spin_btn, FALSE, FALSE, 0);
+  g_signal_connect(atuwin_w_spin_btn, "value-changed", G_CALLBACK(atuwin_w_spin_btn_changed_cb), NULL);
+  label = gtk_label_new("Window\nHeight:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(atuwin_bottom_box), label, FALSE, FALSE, 0);
+  GtkAdjustment *atuwin_h_adj = gtk_adjustment_new(atuwin_wv_h, 400, 9999, 5, 50, 0);
+  GtkWidget *atuwin_h_spin_btn = gtk_spin_button_new(atuwin_h_adj, 1.0, 0);
+  gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(atuwin_h_spin_btn), TRUE);
+  gtk_box_pack_start(GTK_BOX(atuwin_bottom_box), atuwin_h_spin_btn, FALSE, FALSE, 0);
+  g_signal_connect(atuwin_h_spin_btn, "value-changed", G_CALLBACK(atuwin_h_spin_btn_changed_cb), NULL);
+  label = gtk_label_new("Action\nButton:");
+  gtk_widget_set_name(label, "boldlabel_blue");
+  gtk_box_pack_start(GTK_BOX(atuwin_bottom_box), label, FALSE, FALSE, 0);
+  GtkWidget *atuwin_action_box = gtk_entry_new();
+  gtk_entry_set_max_length(GTK_ENTRY(atuwin_action_box), sizeof(atuwin_ACTION) - 1);
+  gtk_entry_set_text(GTK_ENTRY(atuwin_action_box), atuwin_ACTION);
+  gtk_box_pack_start(GTK_BOX(atuwin_bottom_box), atuwin_action_box, FALSE, FALSE, 0);
+  atuwin_action_box_signal_id = g_signal_connect(atuwin_action_box, "activate",
+    G_CALLBACK(atuwin_action_button_clicked), atuwin_action_box);
+  GtkWidget *atuwin_action_btn = gtk_button_new_with_label("Set");
+  gtk_box_pack_start(GTK_BOX(atuwin_bottom_box), atuwin_action_btn, FALSE, FALSE, 0);
+  g_signal_connect(atuwin_action_btn, "clicked", G_CALLBACK(atuwin_action_button_clicked), atuwin_action_box);
+  gtk_grid_attach(GTK_GRID(grid), atuwin_bottom_box, 0, row, 8, 1);
+  //--------------------------------------------------------------------------------
+  //--------------------------------------------------------------------------------
+  row++;
+  col = 0;
+  sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+  gtk_widget_set_name(sep, "menu_separator");
+  gtk_widget_set_size_request(sep, -1, 3);
+  gtk_widget_set_margin_top(sep, 10);
+  gtk_widget_set_margin_bottom(sep, 10);
+  gtk_grid_attach(GTK_GRID(grid), sep, col, row, 8, 1);
+  //--------------------------------------------------------------------------------
+  //--------------------------------------------------------------------------------
+  gtk_container_add(GTK_CONTAINER(content), grid);
+  sub_menu = dialog;
+  gtk_widget_show_all(dialog);
+}
