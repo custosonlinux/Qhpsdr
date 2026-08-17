@@ -71,6 +71,30 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     m_spectrum = new SpectrumAnalyzer(this);
     connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {
+        // Auto-scale the displayed dB range to the actual incoming data
+        // instead of a fixed guess: real receive levels vary a lot with
+        // antenna/band/AGC settings, and a fixed range that doesn't match
+        // what's actually there just looks like flat "mush" with no
+        // visible contrast, even though the underlying spectrum is fine.
+        // Smoothed (not snapped per-frame) so the display doesn't jitter.
+        static float floorDb = -120.0f;
+        static float ceilDb = -40.0f;
+        if (!db.isEmpty()) {
+            float frameMin = db[0];
+            float frameMax = db[0];
+            for (float v : db) {
+                frameMin = std::min(frameMin, v);
+                frameMax = std::max(frameMax, v);
+            }
+            constexpr float kAlpha = 0.08f;
+            floorDb += kAlpha * ((frameMin - 5.0f) - floorDb);
+            ceilDb += kAlpha * ((frameMax + 8.0f) - ceilDb);
+            if (ceilDb - floorDb < 20.0f) {
+                ceilDb = floorDb + 20.0f;
+            }
+        }
+        m_panadapter->setDbRange(floorDb, ceilDb);
+        m_waterfall->setDbRange(floorDb, ceilDb);
         m_panadapter->setSpectrum(db);
         m_waterfall->pushSpectrum(db);
     });
