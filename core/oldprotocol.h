@@ -3,6 +3,7 @@
 
 #include <QHostAddress>
 #include <QObject>
+#include <QVector>
 #include <array>
 #include <cstdint>
 
@@ -39,12 +40,17 @@ public:
     void disconnectFromDevice();
     bool isConnected() const { return m_connected; }
 
+    void setRxFrequency(double hz) { m_rxFrequencyHz = hz; }
+    double rxFrequency() const { return m_rxFrequencyHz; }
+
 signals:
     void connected();
     void disconnected();
     // Emitted roughly once a second with running totals.
     void statsUpdated(quint64 packetsReceived, quint64 samplesReceived, double approxSampleRateHz);
     void errorOccurred(const QString &message);
+    // One 63-sample RX1 sub-frame, interleaved I/Q normalized to [-1, 1].
+    void iqSamplesReady(QVector<double> interleavedIQ);
 
 private slots:
     void readPendingDatagrams();

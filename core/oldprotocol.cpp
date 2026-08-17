@@ -191,15 +191,19 @@ void OldProtocolConnection::parseSubframe(const uchar *frame) {
 
     // Payload: 63 sample-sets of 2-byte mic + 3-byte I + 3-byte Q (single
     // receiver, the default until multi-DDC support is added).
+    constexpr double kScale = 1.0 / 8388608.0; // 2^23, 24-bit signed ADC sample
+    QVector<double> iq;
+    iq.reserve(63 * 2);
     const uchar *p = frame + 8;
     for (int i = 0; i < 63; ++i, p += 8) {
         // p[0..1]: mic sample (unused for now)
         qint32 iSample = get24BESigned(p + 2);
         qint32 qSample = get24BESigned(p + 5);
-        (void) iSample;
-        (void) qSample;
+        iq.append(double(iSample) * kScale);
+        iq.append(double(qSample) * kScale);
         ++m_samplesReceived;
     }
+    emit iqSamplesReady(iq);
 }
 
 void OldProtocolConnection::reportStats() {

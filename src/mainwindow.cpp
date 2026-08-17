@@ -1,11 +1,15 @@
 #include "mainwindow.h"
 
+#include <QAudioFormat>
+#include <QAudioSink>
+#include <QMediaDevices>
 #include <QMenuBar>
 #include <QStatusBar>
 #include <QApplication>
 
 #include "discoverydialog.h"
 #include "oldprotocol.h"
+#include "rxaudio.h"
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *radioMenu = menuBar()->addMenu(tr("&Radio"));
@@ -43,6 +47,16 @@ void MainWindow::showDiscoveryDialog() {
 
     disconnectFromRadio();
 
+    QAudioFormat format;
+    format.setSampleRate(48000);
+    format.setChannelCount(2);
+    format.setSampleFormat(QAudioFormat::Float);
+    m_audioSink = new QAudioSink(QMediaDevices::defaultAudioOutput(), format, this);
+    m_audioDevice = m_audioSink->start();
+
+    m_rxAudio = new RxAudioChannel(this);
+    m_rxAudio->open(/*channel=*/0, /*inputSampleRate=*/48000);
+
     m_connection = new OldProtocolConnection(this);
     connect(m_connection, &OldProtocolConnection::statsUpdated, this,
             [this, device](quint64 packets, quint64 samples, double sps) {
@@ -54,18 +68,42 @@ void MainWindow::showDiscoveryDialog() {
     connect(m_connection, &OldProtocolConnection::errorOccurred, this, [this](const QString &msg) {
         statusBar()->showMessage(tr("Radio connection error: %1").arg(msg));
     });
+    connect(m_connection, &OldProtocolConnection::iqSamplesReady, this, [this](const QVector<double> &iq) {
+        for (int i = 0; i + 1 < iq.size(); i += 2) {
+            m_rxAudio->feedSample(iq[i], iq[i + 1]);
+        }
+    });
+    connect(m_rxAudio, &RxAudioChannel::audioBlockReady, this, &MainWindow::playAudioBlock);
 
     m_connection->connectToDevice(device);
     m_disconnectAction->setEnabled(true);
 }
 
-void MainWindow::disconnectFromRadio() {
-    if (!m_connection) {
+void MainWindow::playAudioBlock(const QVector<float> &interleavedStereo) {
+    if (!m_audioDevice) {
         return;
     }
-    m_connection->disconnectFromDevice();
-    m_connection->deleteLater();
-    m_connection = nullptr;
+    m_audioDevice->write(reinterpret_cast<const char *>(interleavedStereo.constData()),
+                          interleavedStereo.size() * qint64(sizeof(float)));
+}
+
+void MainWindow::disconnectFromRadio() {
+    if (m_connection) {
+        m_connection->disconnectFromDevice();
+        m_connection->deleteLater();
+        m_connection = nullptr;
+    }
+    if (m_rxAudio) {
+        m_rxAudio->close();
+        m_rxAudio->deleteLater();
+        m_rxAudio = nullptr;
+    }
+    if (m_audioSink) {
+        m_audioSink->stop();
+        m_audioSink->deleteLater();
+        m_audioSink = nullptr;
+        m_audioDevice = nullptr;
+    }
     m_disconnectAction->setEnabled(false);
     statusBar()->showMessage(tr("Disconnected."));
 }

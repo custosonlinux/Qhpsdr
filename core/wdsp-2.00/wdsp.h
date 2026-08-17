@@ -1036,3 +1036,7 @@ extern void SetTXALevelerTop(int channel, double maxgain);
 
 extern char *wisdom_get_status(void);
 extern int WDSPwisdom(char *directory);
+
+#ifdef __cplusplus
+}
+#endif

@@ -5,11 +5,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Qt6 Packages
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets OpenGL Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets OpenGL Network Multimedia)
 qt_standard_project_setup()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFTW3F REQUIRED IMPORTED_TARGET fftw3f)
+pkg_check_modules(FFTW3 REQUIRED IMPORTED_TARGET fftw3)
 
 include_directories(include core core/wdsp-2.00)
 
@@ -20,11 +21,13 @@ include_directories(include core core/wdsp-2.00)
 # WDSP_HAVE_SPECBLEACH / WDSP_HAVE_RNNOISE guards in sbnr.c/h, rnnr.c/h) -
 # define both and link the real libraries to enable them.
 file(GLOB WDSP_SOURCES CONFIGURE_DEPENDS core/wdsp-2.00/*.c)
-list(FILTER WDSP_SOURCES EXCLUDE REGEX ".*/(make_calculus|make_interface|make_zetahat|main)\\.c$")
+# make_calculus/make_interface/make_zetahat are standalone lookup-table
+# generator tools (each has its own int main()), not part of the library.
+list(FILTER WDSP_SOURCES EXCLUDE REGEX ".*/(make_calculus|make_interface|make_zetahat)\\.c$")
 
 add_library(wdsp STATIC ${WDSP_SOURCES})
 target_compile_definitions(wdsp PRIVATE _GNU_SOURCE)
-target_link_libraries(wdsp PUBLIC PkgConfig::FFTW3F m pthread)
+target_link_libraries(wdsp PUBLIC PkgConfig::FFTW3F PkgConfig::FFTW3 m pthread)
 
 # Qt application shell.
 #
@@ -46,6 +49,8 @@ set(SOURCES
     core/discovered.h
     core/oldprotocol.cpp
     core/oldprotocol.h
+    core/rxaudio.cpp
+    core/rxaudio.h
 )
 
 qt_add_executable(Qhpsdr ${SOURCES})
@@ -55,5 +60,6 @@ target_link_libraries(Qhpsdr PRIVATE
     Qt6::OpenGLWidgets
     Qt6::OpenGL
     Qt6::Network
+    Qt6::Multimedia
     wdsp
 )
