@@ -1,0 +1,2435 @@
+/* Copyright (C)
+* 2017 - John Melton, G0ORX/N6LYT
+* 2024,2025 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This source code has been forked and was adapted from piHPSDR by DL1YCF to deskHPSDR in October 2024
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+#include <gtk/gtk.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <wdsp.h>
+
+#include "agc.h"
+#include "audio.h"
+#include "band.h"
+#include "bandstack.h"
+#include "channel.h"
+#include "discovered.h"
+#include "filter.h"
+#include "main.h"
+#include "meter.h"
+#include "mode.h"
+#include "property.h"
+#include "radio.h"
+#include "receiver.h"
+#include "transmitter.h"
+#include "vfo.h"
+#include "meter.h"
+#include "rx_panadapter.h"
+#include "zoompan.h"
+#include "sliders.h"
+#include "waterfall.h"
+#include "new_protocol.h"
+#include "old_protocol.h"
+#include "ext.h"
+#include "new_menu.h"
+#include "message.h"
+#include "tci.h"
+#include "tci_audio.h"
+
+#define min(x,y) (x<y?x:y)
+#define max(x,y) (x<y?y:x)
+
+static int last_x;
+static gboolean has_moved = FALSE;
+static gboolean pressed = FALSE;
+static gboolean making_active = FALSE;
+
+#define AM_DC_OFFSET_HZ 500LL
+#define RX_CW_ZERO_BEAT_OUTPUT_RATE 48000.0
+#define RX_CW_ZERO_BEAT_MS 200
+#define RX_CW_ZERO_BEAT_MIN_RATIO 6.0
+#define RX_CW_ZERO_BEAT_MAX_CORRECTION_HZ 1500LL
+
+#ifndef M_PI
+  #define M_PI 3.14159265358979323846
+#endif
+
+static void rx_cw_zero_beat_reset(RECEIVER *rx);
+static void rx_cw_zero_beat_sample(RECEIVER *rx, double sample);
+static gboolean rx_diversity_rx_active(void);
+static int rx_diversity_effective_vfo_id(const RECEIVER *rx);
+
+long long rx_get_mode_dc_offset(int id) {
+  switch (vfo[id].mode) {
+  case modeAM:
+  case modeSAM:
+    return AM_DC_OFFSET_HZ;
+  default:
+    return 0LL;
+  }
+}
+
+long long rx_get_digi_monitor_offset(int id) {
+  const RECEIVER *rx = receiver[id];
+  if (rx == NULL) {
+    return 0LL;
+  }
+  switch (vfo[id].mode) {
+  case modeDIGU:
+    return - (long long) rx->digi_offset_u;
+  case modeDIGL:
+    return (long long) rx->digi_offset_l;
+  default:
+    return 0LL;
+  }
+}
+
+//
+// PART 1. Functions releated to the receiver display
+//
+
+void rx_weak_notify(gpointer data, GObject  *obj) {
+  RECEIVER *rx = (RECEIVER *) data;
+  t_print("%s: id=%d obj=%p\n", __func__, rx->id, obj);
+}
+
+// cppcheck-suppress constParameterPointer
+gboolean rx_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+  const RECEIVER *rx = (RECEIVER *) data;
+  if (rx == active_receiver) {
+    if (event->button == GDK_BUTTON_PRIMARY) {
+      last_x = (int) event->x;
+      has_moved = FALSE;
+      pressed = TRUE;
+    } else if (event->button == GDK_BUTTON_SECONDARY) {
+      if (widget == rx->panadapter) {
+        g_idle_add(ext_start_noise, NULL);
+      } else {
+        g_idle_add(ext_start_rx, NULL);
+      }
+    }
+  } else {
+    making_active = TRUE;
+  }
+  return TRUE;
+}
+
+void rx_set_active(RECEIVER *rx) {
+  //
+  // Abort any frequency entering in the current receiver
+  //
+  vfo_num_pad(-1, active_receiver->id);
+  //
+  // Make rx the new active receiver
+  //
+  active_receiver = rx;
+  g_idle_add(menu_active_receiver_changed, NULL);
+  g_idle_add(ext_vfo_update, NULL);
+  g_idle_add(zoompan_active_receiver_changed, NULL);
+  g_idle_add(sliders_active_receiver_changed, NULL);
+  //
+  // Changing the active receiver flips the TX vfo
+  //
+  radio_tx_vfo_changed();
+  radio_set_alex_antennas();
+}
+
+// cppcheck-suppress constParameterPointer
+gboolean rx_button_release_event(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+  RECEIVER *rx = (RECEIVER *) data;
+  if (making_active) {
+    making_active = FALSE;
+    rx_set_active(rx);
+    if (event->button == GDK_BUTTON_SECONDARY) {
+      if (widget == rx->panadapter) {
+        g_idle_add(ext_start_noise, NULL);
+      } else {
+        g_idle_add(ext_start_rx, NULL);
+      }
+    }
+  } else {
+    if (pressed) {
+      int x = (int) event->x;
+      if (event->button == GDK_BUTTON_PRIMARY) {
+        if (has_moved) {
+          // drag
+          vfo_move((long long)((float)(x - last_x) *rx->hz_per_pixel), TRUE);
+        } else {
+          // move to this frequency
+          vfo_move_to((long long)((float) x * rx->hz_per_pixel));
+        }
+        last_x = x;
+        pressed = FALSE;
+      }
+    }
+  }
+  return TRUE;
+}
+
+gboolean rx_motion_notify_event(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
+  int x, y;
+  GdkModifierType state;
+  const RECEIVER *rx = (RECEIVER *) data;
+  //
+  // This solves a problem observed since with GTK about mid-2023:
+  // when re-focusing a (sub-)menu window after it has lost focus,
+  // it may happen that the button press event for "re-focusing"
+  // the menu window also ends up in the receiver panel, and that
+  // the subsequent button release event is not forwarded to the
+  // receiver panal.
+  // Subsequent mouse moves (without a button pressed) then led to
+  // wild VFO frequency changes. The first temporary solution was to
+  // ignore all button press events if a (sub-)menu window is open, but
+  // this reduces deskHPSDR functionality. Now we solve this problem by
+  // looking HERE if the mouse button is pressed, and if not, ignore the
+  // move.
+  //
+  int button_down = (event->state & (GDK_BUTTON1_MASK | GDK_BUTTON2_MASK)) != 0;
+  //
+  // if !pressed, we may come from the destruction
+  // of a menu, and should not move the VFO.
+  //
+  if (!making_active && pressed && button_down) {
+    gdk_window_get_device_position(event->window,
+                                   event->device,
+                                   &x,
+                                   &y,
+                                   &state);
+    //
+    // Sometimes it turned out to be difficult to "jump" to a
+    // new frequency by just clicking in the panadaper. Futher analysis
+    // showed that there were "moves" with zero offset arriving between
+    // pressing and releasing the mouse button.
+    // Accepting such a "move" between a  "press" and the next "release" event
+    // sets "has_moved" and results in a "VFO drag" instead of a "VFO set".
+    //
+    // So we do the following:
+    // - "moves" with zero offset are always ignored
+    // - the first "move" to be accepted after a "press" must lead us
+    //   at least 2 pixels away from the original position.
+    //
+    int moved = x - last_x;
+    if (moved) {
+      if (has_moved || moved < -1 || moved > 1) {
+        vfo_move((long long)((float) moved * rx->hz_per_pixel), FALSE);
+        last_x = x;
+        has_moved = TRUE;
+      }
+    }
+  }
+  return TRUE;
+}
+
+// cppcheck-suppress constParameterPointer
+gboolean rx_scroll_event(GtkWidget *widget, const GdkEventScroll *event, gpointer data) {
+  RECEIVER *rx = (RECEIVER *) data;
+  if (!rx) {
+    // Falls kein gültiger Zeiger übergeben wurde, mache nichts und verhindere Absturz
+    t_print("%s: ERROR: called with NULL RECEIVER pointer!\n", __func__);
+    return FALSE;  // Event nicht verarbeitet
+  }
+#ifdef __APPLE__
+  // if using Apple Magic Mouse it's tricky to use the mouse because we have only touch but no real wheel
+  // for safer use we need to press the OPTION key for VFO movement in VFO step and
+  // CTRL+OPTION for VFO movement in VFO step 10 instead 1
+  //
+  // At a Mac we use now GDK_MOD1_MASK [OPTION-key] and GDK_CONTROL_MASK [CONTROL-key],
+  // Serveral tests with a Macbook Air M1 was showing, that combinations like SHIFT+CONTROL or SHIFT+OPTION
+  // hasn't any effect. Otherwise, OPTION and CTRL+OPTION were working. Very strange...
+  if (rx->wheel_present) {
+    gboolean shift = (event->state & GDK_SHIFT_MASK) != 0;
+    gboolean option = (event->state & GDK_MOD1_MASK) != 0;
+    if ((shift && !option) || (!shift && option)) {   // XOR: Nur eine gedrückt
+      vfo_step(event->direction == GDK_SCROLL_UP ? 10 : -10);
+    } else {
+      vfo_step(event->direction == GDK_SCROLL_UP ? 1 : -1);
+    }
+  } else {
+    gboolean option = event->state & GDK_MOD1_MASK;
+    gboolean control = event->state & GDK_CONTROL_MASK;
+    if (option && control) {
+      vfo_step(event->direction == GDK_SCROLL_UP ? 10 : -10);
+    } else if (option) {
+      vfo_step(event->direction == GDK_SCROLL_UP ? 1 : -1);
+    }
+  }
+#else
+  // add press SHIFT if using mouse wheel for VFO movement in VFO step 10 instead 1
+  int wheel_step = (event->state & GDK_SHIFT_MASK) ? 10 : 1;
+  if (event->direction == GDK_SCROLL_UP) {
+    vfo_step(wheel_step);
+  } else if (event->direction == GDK_SCROLL_DOWN) {
+    vfo_step(-wheel_step);
+  }
+#endif
+  return TRUE;
+}
+
+void rx_save_state(const RECEIVER *rx) {
+  SetPropI1("receiver.%d.alex_antenna", rx->id,                 rx->alex_antenna);
+  SetPropI1("receiver.%d.adc", rx->id,                          rx->adc);
+  //
+  // For a PS_RX_FEEDBACK, we only store/restore the alex antenna and ADC
+  //
+  if (rx->id == PS_RX_FEEDBACK) { return; }
+  SetPropI1("receiver.%d.audio_channel", rx->id,                rx->audio_channel);
+  SetPropI1("receiver.%d.local_audio", rx->id,                  rx->local_audio);
+  SetPropI1("receiver.%d.local_audio_mute", rx->id,             rx->local_audio_mute);
+  SetPropS1("receiver.%d.audio_name", rx->id,                   rx->audio_name);
+#ifdef PULSEAUDIO
+  SetPropI1("receiver.%d.pulseaudio_buffer_size", rx->id,       rx->pulseaudio_buffer_size);
+#endif
+  SetPropI1("receiver.%d.audio_device", rx->id,                 rx->audio_device);
+  SetPropI1("receiver.%d.mute_when_not_active", rx->id,         rx->mute_when_not_active);
+  SetPropI1("receiver.%d.mute_radio", rx->id,                   rx->mute_radio);
+#ifdef __APPLE__
+  SetPropI1("receiver.%d.wheel_present", rx->id,                rx->wheel_present);
+#endif
+  SetPropI1("receiver.%d.smetermode", rx->id,                   rx->smetermode);
+  SetPropI1("receiver.%d.low_latency", rx->id,                  rx->low_latency);
+  SetPropI1("receiver.%d.fft_size", rx->id,                     rx->fft_size);
+  SetPropI1("receiver.%d.sample_rate", rx->id,                  rx->sample_rate);
+  SetPropI1("receiver.%d.filter_low", rx->id,                   rx->filter_low);
+  SetPropI1("receiver.%d.filter_high", rx->id,                  rx->filter_high);
+  SetPropI1("receiver.%d.use_cw_dp_filter", rx->id,             rx->use_cw_dp_filter);
+  SetPropF1("receiver.%d.rx_cw_zero_beat_calibration_hz", rx->id, rx->rx_cw_zero_beat_calibration_hz);
+  SetPropI1("receiver.%d.fps", rx->id,                          rx->fps);
+  SetPropI1("receiver.%d.panadapter_low", rx->id,               rx->panadapter_low);
+  SetPropI1("receiver.%d.panadapter_high", rx->id,              rx->panadapter_high);
+  SetPropI1("receiver.%d.panadapter_step", rx->id,              rx->panadapter_step);
+  SetPropI1("receiver.%d.panadapter_peaks_on", rx->id,          rx->panadapter_peaks_on);
+  SetPropI1("receiver.%d.panadapter_num_peaks", rx->id,         rx->panadapter_num_peaks);
+  SetPropI1("receiver.%d.panadapter_ignore_range_divider", rx->id, rx->panadapter_ignore_range_divider);
+  SetPropI1("receiver.%d.panadapter_ignore_noise_percentile", rx->id, rx->panadapter_ignore_noise_percentile);
+  SetPropI1("receiver.%d.panadapter_hide_noise_filled", rx->id, rx->panadapter_hide_noise_filled);
+  SetPropI1("receiver.%d.panadapter_peaks_in_passband_filled", rx->id, rx->panadapter_peaks_in_passband_filled);
+  SetPropI1("receiver.%d.panadapter_peaks_as_smeter", rx->id,   rx->panadapter_peaks_as_smeter);
+  SetPropI1("receiver.%d.panadapter_ovf_on", rx->id,            rx->panadapter_ovf_on);
+  SetPropI1("receiver.%d.panadapter_autoscale_enabled", rx->id, rx->panadapter_autoscale_enabled);
+  SetPropF1("receiver.%d.image_measure_hz", rx->id,             rx->image_measure_hz);
+  SetPropF1("receiver.%d.rx_iq_gain", rx->id,                   rx->rx_iq_gain);
+  SetPropF1("receiver.%d.rx_iq_phase", rx->id,                  rx->rx_iq_phase);
+  SetPropI1("receiver.%d.digi_offset_u", rx->id,                 rx->digi_offset_u);
+  SetPropI1("receiver.%d.digi_offset_l", rx->id,                 rx->digi_offset_l);
+  SetPropI1("receiver.%d.pan_peak_preserve", rx->id,            rx->pan_peak_preserve);
+  SetPropI1("receiver.%d.pan_window_type", rx->id,              rx->pan_window_type);
+  SetPropI1("receiver.%d.pan_fft_size", rx->id,                 rx->pan_fft_size);
+  SetPropI1("receiver.%d.display_waterfall", rx->id,            rx->display_waterfall);
+  SetPropI1("receiver.%d.display_panadapter", rx->id,           rx->display_panadapter);
+  SetPropI1("receiver.%d.display_filled", rx->id,               rx->display_filled);
+  SetPropI1("receiver.%d.display_gradient", rx->id,             rx->display_gradient);
+  SetPropI1("receiver.%d.display_detector_mode", rx->id,        rx->display_detector_mode);
+  SetPropI1("receiver.%d.display_average_mode", rx->id,         rx->display_average_mode);
+  SetPropF1("receiver.%d.display_average_time", rx->id,         rx->display_average_time);
+  SetPropI1("receiver.%d.waterfall_low", rx->id,                rx->waterfall_low);
+  SetPropI1("receiver.%d.waterfall_high", rx->id,               rx->waterfall_high);
+  SetPropI1("receiver.%d.waterfall_automatic", rx->id,          rx->waterfall_automatic);
+  SetPropI1("receiver.%d.panadapter_noise_margin", rx->id,      rx->panadapter_noise_margin);
+  if (have_alex_att) {
+    SetPropI1("receiver.%d.alex_attenuation", rx->id,           rx->alex_attenuation);
+  }
+  SetPropF1("receiver.%d.volume", rx->id,                       rx->volume);
+  SetPropF1("receiver.%d.tci_rxaudio_scale", rx->id,            rx->tci_rxaudio_scale);
+  SetPropI1("receiver.%d.agc", rx->id,                          rx->agc);
+  SetPropF1("receiver.%d.agc_gain", rx->id,                     rx->agc_gain);
+  SetPropF1("receiver.%d.agc_slope", rx->id,                    rx->agc_slope);
+  SetPropF1("receiver.%d.agc_hang_threshold", rx->id,           rx->agc_hang_threshold);
+  SetPropI1("receiver.%d.dither", rx->id,                       rx->dither);
+  SetPropI1("receiver.%d.random", rx->id,                       rx->random);
+  SetPropI1("receiver.%d.preamp", rx->id,                       rx->preamp);
+  SetPropI1("receiver.%d.nb", rx->id,                           rx->nb);
+  SetPropI1("receiver.%d.nr", rx->id,                           rx->nr);
+  SetPropI1("receiver.%d.anf", rx->id,                          rx->anf);
+  SetPropI1("receiver.%d.snb", rx->id,                          rx->snb);
+  // SetPropI1("receiver.%d.mnf", rx->id,                          rx->mnf);
+  SetPropF1("receiver.%d.mnf_cfreq", rx->id,                    rx->mnf_cfreq);
+  SetPropF1("receiver.%d.mnf_fbw", rx->id,                      rx->mnf_fbw);
+  SetPropI1("receiver.%d.nr_agc", rx->id,                       rx->nr_agc);
+  SetPropI1("receiver.%d.nr2_gain_method", rx->id,              rx->nr2_gain_method);
+  SetPropI1("receiver.%d.nr2_npe_method", rx->id,               rx->nr2_npe_method);
+  SetPropI1("receiver.%d.nr2_ae", rx->id,                       rx->nr2_ae);
+  SetPropI1("receiver.%d.nr2_post", rx->id,                   rx->nr2_post);
+  SetPropI1("receiver.%d.nr2_post_taper", rx->id,             rx->nr2_post_taper);
+  SetPropI1("receiver.%d.nr2_post_nlevel", rx->id,            rx->nr2_post_nlevel);
+  SetPropI1("receiver.%d.nr2_post_factor", rx->id,            rx->nr2_post_factor);
+  SetPropI1("receiver.%d.nr2_post_rate", rx->id,              rx->nr2_post_rate);
+  SetPropF1("receiver.%d.nr2_trained_threshold", rx->id,        rx->nr2_trained_threshold);
+  SetPropF1("receiver.%d.nr2_trained_t2", rx->id,               rx->nr2_trained_t2);
+  SetPropI1("receiver.%d.nb2_mode", rx->id,                     rx->nb2_mode);
+  SetPropF1("receiver.%d.nb_tau", rx->id,                       rx->nb_tau);
+  SetPropF1("receiver.%d.nb_advtime", rx->id,                   rx->nb_advtime);
+  SetPropF1("receiver.%d.nb_hang", rx->id,                      rx->nb_hang);
+  SetPropF1("receiver.%d.nb_thresh", rx->id,                    rx->nb_thresh);
+  SetPropF1("receiver.%d.nr4_reduction_amount", rx->id,         rx->nr4_reduction_amount);
+  SetPropF1("receiver.%d.nr4_smoothing_factor", rx->id,         rx->nr4_smoothing_factor);
+  SetPropF1("receiver.%d.nr4_whitening_factor", rx->id,         rx->nr4_whitening_factor);
+  SetPropF1("receiver.%d.nr4_noise_rescale", rx->id,            rx->nr4_noise_rescale);
+  SetPropF1("receiver.%d.nr4_post_filter_threshold", rx->id,    rx->nr4_post_filter_threshold);
+  SetPropI1("receiver.%d.deviation", rx->id,                    rx->deviation);
+  SetPropI1("receiver.%d.squelch_enable", rx->id,               rx->squelch_enable);
+  SetPropF1("receiver.%d.squelch", rx->id,                      rx->squelch);
+  SetPropI1("receiver.%d.binaural", rx->id,                     rx->binaural);
+  if (save_zoom_state) {
+    SetPropI1("receiver.%d.zoom", rx->id,                       rx->zoom);
+  }
+  SetPropI1("receiver.%d.pan", rx->id,                          rx->pan);
+  SetPropI1("receiver.%d.eq_enable", rx->id,                    rx->eq_enable);
+  for (int i = 0; i < 13; i++) {
+    SetPropF2("receiver.%d.eq_freq[%d]", rx->id, i,             rx->eq_freq[i]);
+    SetPropF2("receiver.%d.eq_gain[%d]", rx->id, i,             rx->eq_gain[i]);
+  }
+}
+
+void rx_restore_state(RECEIVER *rx) {
+  t_print("%s: id=%d\n", __func__, rx->id);
+  GetPropI1("receiver.%d.alex_antenna", rx->id,                 rx->alex_antenna);
+  GetPropI1("receiver.%d.adc", rx->id,                          rx->adc);
+  // Sanity Check
+  if (n_adc == 1) { rx->adc = 0; }
+  //
+  // For a PS_RX_FEEDBACK, we only store/restore the alex antenna and ADC
+  //
+  if (rx->id == PS_RX_FEEDBACK) { return; }
+  GetPropI1("receiver.%d.audio_channel", rx->id,                rx->audio_channel);
+  GetPropI1("receiver.%d.local_audio", rx->id,                  rx->local_audio);
+  GetPropI1("receiver.%d.local_audio_mute", rx->id,             rx->local_audio_mute);
+  GetPropS1("receiver.%d.audio_name", rx->id,                   rx->audio_name);
+#ifdef PULSEAUDIO
+  GetPropI1("receiver.%d.pulseaudio_buffer_size", rx->id,       rx->pulseaudio_buffer_size);
+  switch (rx->pulseaudio_buffer_size) {
+  case 0:
+  case 128:
+  case 256:
+  case 512:
+  case 1024:
+  case 2048:
+  case 4096:
+    break;
+  default:
+    rx->pulseaudio_buffer_size = 0;
+    break;
+  }
+#endif
+  GetPropI1("receiver.%d.audio_device", rx->id,                 rx->audio_device);
+  GetPropI1("receiver.%d.mute_when_not_active", rx->id,         rx->mute_when_not_active);
+  GetPropI1("receiver.%d.mute_radio", rx->id,                   rx->mute_radio);
+#ifdef __APPLE__
+  GetPropI1("receiver.%d.wheel_present", rx->id,                rx->wheel_present);
+#endif
+  GetPropI1("receiver.%d.smetermode", rx->id,                   rx->smetermode);
+  GetPropI1("receiver.%d.low_latency", rx->id,                  rx->low_latency);
+  GetPropI1("receiver.%d.fft_size", rx->id,                     rx->fft_size);
+  GetPropI1("receiver.%d.sample_rate", rx->id,                  rx->sample_rate);
+  //
+  // This may happen if the firmware was down-graded from P2 to P1
+  //
+  if (protocol == ORIGINAL_PROTOCOL && rx->sample_rate > 384000) {
+    rx->sample_rate = 384000;
+  }
+  GetPropI1("receiver.%d.filter_low", rx->id,                   rx->filter_low);
+  GetPropI1("receiver.%d.filter_high", rx->id,                  rx->filter_high);
+  GetPropI1("receiver.%d.use_cw_dp_filter", rx->id,             rx->use_cw_dp_filter);
+  GetPropF1("receiver.%d.rx_cw_zero_beat_calibration_hz", rx->id, rx->rx_cw_zero_beat_calibration_hz);
+  GetPropI1("receiver.%d.fps", rx->id,                          rx->fps);
+  GetPropI1("receiver.%d.panadapter_low", rx->id,               rx->panadapter_low);
+  GetPropI1("receiver.%d.panadapter_high", rx->id,              rx->panadapter_high);
+  GetPropI1("receiver.%d.panadapter_step", rx->id,              rx->panadapter_step);
+  GetPropI1("receiver.%d.panadapter_peaks_on", rx->id,          rx->panadapter_peaks_on);
+  GetPropI1("receiver.%d.panadapter_num_peaks", rx->id,         rx->panadapter_num_peaks);
+  GetPropI1("receiver.%d.panadapter_ignore_range_divider", rx->id, rx->panadapter_ignore_range_divider);
+  GetPropI1("receiver.%d.panadapter_ignore_noise_percentile", rx->id, rx->panadapter_ignore_noise_percentile);
+  GetPropI1("receiver.%d.panadapter_hide_noise_filled", rx->id, rx->panadapter_hide_noise_filled);
+  GetPropI1("receiver.%d.panadapter_peaks_in_passband_filled", rx->id, rx->panadapter_peaks_in_passband_filled);
+  GetPropI1("receiver.%d.panadapter_peaks_as_smeter", rx->id,   rx->panadapter_peaks_as_smeter);
+  GetPropI1("receiver.%d.panadapter_ovf_on", rx->id,            rx->panadapter_ovf_on);
+  GetPropI1("receiver.%d.panadapter_autoscale_enabled", rx->id, rx->panadapter_autoscale_enabled);
+  GetPropF1("receiver.%d.image_measure_hz", rx->id,             rx->image_measure_hz);
+  GetPropF1("receiver.%d.rx_iq_gain", rx->id,                   rx->rx_iq_gain);
+  GetPropF1("receiver.%d.rx_iq_phase", rx->id,                  rx->rx_iq_phase);
+  GetPropI1("receiver.%d.digi_offset_u", rx->id,                 rx->digi_offset_u);
+  GetPropI1("receiver.%d.digi_offset_l", rx->id,                 rx->digi_offset_l);
+  GetPropI1("receiver.%d.pan_peak_preserve", rx->id,            rx->pan_peak_preserve);
+  GetPropI1("receiver.%d.pan_window_type", rx->id,              rx->pan_window_type);
+  GetPropI1("receiver.%d.pan_fft_size", rx->id,                 rx->pan_fft_size);
+  GetPropI1("receiver.%d.display_waterfall", rx->id,            rx->display_waterfall);
+  GetPropI1("receiver.%d.display_panadapter", rx->id,           rx->display_panadapter);
+  GetPropI1("receiver.%d.display_filled", rx->id,               rx->display_filled);
+  GetPropI1("receiver.%d.display_gradient", rx->id,             rx->display_gradient);
+  GetPropI1("receiver.%d.display_detector_mode", rx->id,        rx->display_detector_mode);
+  GetPropI1("receiver.%d.display_average_mode", rx->id,         rx->display_average_mode);
+  GetPropF1("receiver.%d.display_average_time", rx->id,         rx->display_average_time);
+  GetPropI1("receiver.%d.waterfall_low", rx->id,                rx->waterfall_low);
+  GetPropI1("receiver.%d.waterfall_high", rx->id,               rx->waterfall_high);
+  GetPropI1("receiver.%d.waterfall_automatic", rx->id,          rx->waterfall_automatic);
+  GetPropI1("receiver.%d.panadapter_noise_margin", rx->id,      rx->panadapter_noise_margin);
+  if (have_alex_att) {
+    GetPropI1("receiver.%d.alex_attenuation", rx->id,           rx->alex_attenuation);
+  }
+  GetPropF1("receiver.%d.volume", rx->id,                       rx->volume);
+  GetPropF1("receiver.%d.tci_rxaudio_scale", rx->id,            rx->tci_rxaudio_scale);
+  GetPropI1("receiver.%d.agc", rx->id,                          rx->agc);
+  GetPropF1("receiver.%d.agc_gain", rx->id,                     rx->agc_gain);
+  GetPropF1("receiver.%d.agc_slope", rx->id,                    rx->agc_slope);
+  GetPropF1("receiver.%d.agc_hang_threshold", rx->id,           rx->agc_hang_threshold);
+  GetPropI1("receiver.%d.dither", rx->id,                       rx->dither);
+  GetPropI1("receiver.%d.random", rx->id,                       rx->random);
+  GetPropI1("receiver.%d.preamp", rx->id,                       rx->preamp);
+  GetPropI1("receiver.%d.nb", rx->id,                           rx->nb);
+  GetPropI1("receiver.%d.nr", rx->id,                           rx->nr);
+  GetPropI1("receiver.%d.anf", rx->id,                          rx->anf);
+  GetPropI1("receiver.%d.snb", rx->id,                          rx->snb);
+  // GetPropI1("receiver.%d.mnf", rx->id,                          rx->mnf);
+  GetPropF1("receiver.%d.mnf_cfreq", rx->id,                    rx->mnf_cfreq);
+  GetPropF1("receiver.%d.mnf_fbw", rx->id,                      rx->mnf_fbw);
+  GetPropI1("receiver.%d.nr_agc", rx->id,                       rx->nr_agc);
+  GetPropI1("receiver.%d.nr2_gain_method", rx->id,              rx->nr2_gain_method);
+  GetPropI1("receiver.%d.nr2_npe_method", rx->id,               rx->nr2_npe_method);
+  GetPropI1("receiver.%d.nr2_ae", rx->id,                       rx->nr2_ae);
+  GetPropI1("receiver.%d.nr2_post", rx->id,                   rx->nr2_post);
+  GetPropI1("receiver.%d.nr2_post_taper", rx->id,             rx->nr2_post_taper);
+  GetPropI1("receiver.%d.nr2_post_nlevel", rx->id,            rx->nr2_post_nlevel);
+  GetPropI1("receiver.%d.nr2_post_factor", rx->id,            rx->nr2_post_factor);
+  GetPropI1("receiver.%d.nr2_post_rate", rx->id,              rx->nr2_post_rate);
+  GetPropF1("receiver.%d.nr2_trained_threshold", rx->id,        rx->nr2_trained_threshold);
+  GetPropF1("receiver.%d.nr2_trained_t2", rx->id,               rx->nr2_trained_t2);
+  GetPropI1("receiver.%d.nb2_mode", rx->id,                     rx->nb2_mode);
+  GetPropF1("receiver.%d.nb_tau", rx->id,                       rx->nb_tau);
+  GetPropF1("receiver.%d.nb_advtime", rx->id,                   rx->nb_advtime);
+  GetPropF1("receiver.%d.nb_hang", rx->id,                      rx->nb_hang);
+  GetPropF1("receiver.%d.nb_thresh", rx->id,                    rx->nb_thresh);
+  GetPropF1("receiver.%d.nr4_reduction_amount", rx->id,         rx->nr4_reduction_amount);
+  GetPropF1("receiver.%d.nr4_smoothing_factor", rx->id,         rx->nr4_smoothing_factor);
+  GetPropF1("receiver.%d.nr4_whitening_factor", rx->id,         rx->nr4_whitening_factor);
+  GetPropF1("receiver.%d.nr4_noise_rescale", rx->id,            rx->nr4_noise_rescale);
+  GetPropF1("receiver.%d.nr4_post_filter_threshold", rx->id,    rx->nr4_post_filter_threshold);
+  GetPropI1("receiver.%d.deviation", rx->id,                    rx->deviation);
+  GetPropI1("receiver.%d.squelch_enable", rx->id,               rx->squelch_enable);
+  GetPropF1("receiver.%d.squelch", rx->id,                      rx->squelch);
+  GetPropI1("receiver.%d.binaural", rx->id,                     rx->binaural);
+  if (save_zoom_state) {
+    GetPropI1("receiver.%d.zoom", rx->id,                       rx->zoom);
+  }
+  GetPropI1("receiver.%d.pan", rx->id,                          rx->pan);
+  GetPropI1("receiver.%d.eq_enable", rx->id,                    rx->eq_enable);
+  for (int i = 0; i < 13; i++) {
+    GetPropF2("receiver.%d.eq_freq[%d]", rx->id, i,             rx->eq_freq[i]);
+    GetPropF2("receiver.%d.eq_gain[%d]", rx->id, i,             rx->eq_gain[i]);
+  }
+}
+
+void rx_reconfigure(RECEIVER *rx, int height) {
+  int y = 0;
+  // now we separate the old myheight: one for panadapter myheight_pan and one for waterfall myheight_wf
+  // for adjust the display relation between RX panadapter and waterfall
+  int myheight_pan = 0;
+  int myheight_wf = 0;
+  //
+  // myheight is the size of the waterfall or the panadapter
+  // which is the full or half of the height depending on whether BOTH
+  // are displayed
+  //
+  ui_print("%s: rx=%d width=%d height=%d percent_pan_wf=%f\n", __func__, rx->id, rx->width, rx->height,
+           percent_pan_wf);
+  g_mutex_lock(&rx->display_mutex);
+  // int myheight = (rx->display_panadapter && rx->display_waterfall) ? height / 2 : height;
+  if (rx->display_panadapter && rx->display_waterfall) {
+    // calculation in pixel, how many percent will be shown the RX pandapter in relation to the waterfall
+    // the percent_pan_wf value is defined in radio.c and adjustable in the Display Menu
+    myheight_pan = height * (percent_pan_wf * 0.01);
+    // full height minus RX panadapter height in pixel
+    myheight_wf = height - myheight_pan;
+  } else {
+    myheight_pan = height;
+    myheight_wf = height;
+  }
+  ui_print("%s: myheight_pan %d myheight_wf %d\n", __func__, myheight_pan, myheight_wf);
+  rx->height = height; // total height
+  gtk_widget_set_size_request(rx->panel, rx->width, rx->height);
+  if (rx->display_panadapter) {
+    if (rx->panadapter == NULL) {
+      ui_print("%s: panadapter_init: width:%d height:%d\n", __func__, rx->width, myheight_pan);
+      rx_panadapter_init(rx, rx->width, myheight_pan);
+      gtk_fixed_put(GTK_FIXED(rx->panel), rx->panadapter, 0, y);   // y=0 here always
+    } else {
+      // set the size
+      gtk_widget_set_size_request(rx->panadapter, rx->width, myheight_pan);
+      // move the current one
+      gtk_fixed_move(GTK_FIXED(rx->panel), rx->panadapter, 0, y);
+    }
+    y += myheight_pan;
+  } else {
+    if (rx->panadapter != NULL) {
+      gtk_container_remove(GTK_CONTAINER(rx->panel), rx->panadapter);
+      rx->panadapter = NULL;
+    }
+  }
+  if (rx->display_waterfall) {
+    if (rx->waterfall == NULL) {
+      ui_print("%s: waterfall_init: width:%d height:%d\n", __func__, rx->width, myheight_wf);
+      waterfall_init(rx, rx->width, myheight_wf);
+      gtk_fixed_put(GTK_FIXED(rx->panel), rx->waterfall, 0, y);   // y=0 if ONLY waterfall is present
+    } else {
+      // set the size
+      ui_print("%s: waterfall set_size_request: width:%d height:%d\n", __func__, rx->width, myheight_wf);
+      gtk_widget_set_size_request(rx->waterfall, rx->width, myheight_wf);
+      // move the current one
+      gtk_fixed_move(GTK_FIXED(rx->panel), rx->waterfall, 0, y);
+    }
+  } else {
+    if (rx->waterfall != NULL) {
+      gtk_container_remove(GTK_CONTAINER(rx->panel), rx->waterfall);
+      rx->waterfall = NULL;
+    }
+  }
+  gtk_widget_show_all(rx->panel);
+  g_mutex_unlock(&rx->display_mutex);
+}
+
+typedef struct {
+  gint64 window_start_us;
+  guint calls;
+  guint rendered;
+  gint64 total_us;
+  gint64 max_us;
+  guint late;
+} RX_DISPLAY_DEBUG_STATS;
+
+/* RX1 and RX2 only; PureSignal feedback receivers are intentionally excluded. */
+static RX_DISPLAY_DEBUG_STATS rx_display_debug_stats[2];
+
+static void rx_display_debug_update(RECEIVER *rx, gint64 elapsed_us, int rendered) {
+  if (rx->id < 0 || (guint) rx->id >= G_N_ELEMENTS(rx_display_debug_stats)) {
+    return;
+  }
+  RX_DISPLAY_DEBUG_STATS *stats = &rx_display_debug_stats[rx->id];
+  gint64 now_us = g_get_monotonic_time();
+  if (stats->window_start_us == 0) {
+    stats->window_start_us = now_us;
+  }
+  stats->calls++;
+  stats->rendered += rendered != 0;
+  stats->total_us += elapsed_us;
+  if (elapsed_us > stats->max_us) {
+    stats->max_us = elapsed_us;
+  }
+  gint64 frame_budget_us = rx->fps > 0 ? 1000000LL / rx->fps : 0;
+  if (frame_budget_us > 0 && elapsed_us > frame_budget_us) {
+    stats->late++;
+  }
+  gint64 window_us = now_us - stats->window_start_us;
+  if (window_us >= 5000000LL) {
+    double seconds = (double) window_us / 1000000.0;
+    double actual_fps = stats->calls / seconds;
+    double rendered_fps = stats->rendered / seconds;
+    double avg_ms = stats->calls > 0 ? (double) stats->total_us / (1000.0 * stats->calls) : 0.0;
+    double max_ms = (double) stats->max_us / 1000.0;
+    double load = frame_budget_us > 0 ? 100.0 * ((double) stats->total_us / stats->calls) / frame_budget_us : 0.0;
+    double peak = frame_budget_us > 0 ? 100.0 * stats->max_us / frame_budget_us : 0.0;
+    t_print("DISPLAY RX%d cfg=%d fps actual=%.1f rendered=%.1f avg=%.2f ms max=%.2f ms load=%.1f%% peak=%.1f%% late=%u/%u\n",
+            rx->id + 1, rx->fps, actual_fps, rendered_fps, avg_ms, max_ms, load, peak, stats->late, stats->calls);
+    *stats = (RX_DISPLAY_DEBUG_STATS) {0};
+    stats->window_start_us = now_us;
+  }
+}
+
+static int rx_update_display(gpointer data) {
+  RECEIVER *rx = (RECEIVER *) data;
+  gint64 debug_start_us = display_debug ? g_get_monotonic_time() : 0;
+  if (rx->displaying) {
+    if (rx->pixels > 0) {
+      int rc;
+      g_mutex_lock(&rx->display_mutex);
+      rc = rx_get_pixels(rx);
+      if (rc) {
+        if (rx->display_panadapter) {
+          rx_panadapter_update(rx);
+        }
+        if (rx->display_waterfall) {
+          waterfall_update(rx);
+        }
+      }
+      g_mutex_unlock(&rx->display_mutex);
+      if (active_receiver == rx) {
+        //
+        // since rx->meter is used in other places as well (e.g. rigctl),
+        // the value obtained from WDSP is best corrected HERE for
+        // possible gain and attenuation
+        //
+        int id = rx->id;
+        int b  = vfo[id].band;
+        const BAND *band = band_get_band(b);
+        int calib = rx_gain_calibration - band->gain;
+        double level = rx_get_smeter(rx);
+        level += (double) calib + (double) adc[rx->adc].attenuation - adc[rx->adc].gain;
+        if (filter_board == CHARLY25 && rx->adc == 0) {
+          level += (double)(12 * rx->alex_attenuation - 18 * rx->preamp - 18 * rx->dither);
+        }
+        if (filter_board == ALEX && rx->adc == 0) {
+          level += (double)(10 * rx->alex_attenuation);
+        }
+        rx->meter = level;
+        meter_update(rx, SMETER, rx->meter, 0.0, 0.0);
+      }
+      if (display_debug) {
+        rx_display_debug_update(rx, g_get_monotonic_time() - debug_start_us, rc);
+      }
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+void rx_set_displaying(RECEIVER *rx) {
+  if (rx->displaying) {
+    if (rx->update_timer_id > 0) {
+      g_source_remove(rx->update_timer_id);
+    }
+    rx->update_timer_id = gdk_threads_add_timeout_full(G_PRIORITY_HIGH_IDLE, 1000 / rx->fps, rx_update_display, rx, NULL);
+  } else {
+    if (rx->update_timer_id > 0) {
+      g_source_remove(rx->update_timer_id);
+      rx->update_timer_id = 0;
+    }
+  }
+}
+
+static void rx_create_visual(RECEIVER *rx) {
+  int y = 0;
+  rx->panel = gtk_fixed_new();
+  ui_print("%s: RXid=%d width=%d height=%d %p\n", __func__, rx->id, rx->width, rx->height, rx->panel);
+  g_object_weak_ref(G_OBJECT(rx->panel), rx_weak_notify, (gpointer) rx);
+  gtk_widget_set_size_request(rx->panel, rx->width, rx->height);
+  rx->panadapter = NULL;
+  rx->waterfall = NULL;
+  int height = rx->height;
+  if (rx->display_waterfall) {
+    height = height / 2;
+  }
+  rx_panadapter_init(rx, rx->width, height);
+  ui_print("%s: panadapter height=%d y=%d %p\n", __func__, height, y, rx->panadapter);
+  g_object_weak_ref(G_OBJECT(rx->panadapter), rx_weak_notify, (gpointer) rx);
+  gtk_fixed_put(GTK_FIXED(rx->panel), rx->panadapter, 0, y);
+  y += height;
+  if (rx->display_waterfall) {
+    waterfall_init(rx, rx->width, height);
+    ui_print("%s: waterfall height=%d y=%d %p\n", __func__, height, y, rx->waterfall);
+    g_object_weak_ref(G_OBJECT(rx->waterfall), rx_weak_notify, (gpointer) rx);
+    gtk_fixed_put(GTK_FIXED(rx->panel), rx->waterfall, 0, y);
+  }
+  gtk_widget_show_all(rx->panel);
+}
+
+RECEIVER *rx_create_pure_signal_receiver(int id, int sample_rate, int width, int fps) {
+  //
+  // For a PureSignal receiver, most parameters are not needed
+  // so we fill the entire data with zeroes
+  //
+  // RECEIVER *rx = malloc(sizeof(RECEIVER));
+  // memset (rx, 0, sizeof(RECEIVER));
+  RECEIVER *rx = g_new0(RECEIVER, 1);
+  //
+  // Setting the non-zero parameters.
+  // a PS_TX_FEEDBACK receiver only needs and id and the iq_input_buffer (nothing else).
+  // a PS_RX_FEEDBACK receiver needs an analyzer (for the MON button), and
+  // it needs an alex_rx_antenna setting.
+  //
+  rx->id = id;
+  rx->buffer_size = 1024;
+  rx->iq_input_buffer = g_new(double, 2 * rx->buffer_size);
+  if (id == PS_RX_FEEDBACK) {
+    //
+    // The analyzer is only used if
+    // displaying the RX feedback samples (MON button in PS menu).
+    //
+    rx->alex_antenna = 0;
+    rx->adc = 0;
+    rx_restore_state(rx);
+    g_mutex_init(&rx->mutex);
+    g_mutex_init(&rx->display_mutex);
+    rx->sample_rate = sample_rate;
+    rx->fps = fps;
+    rx->width = width; // used to re-calculate rx->pixels upon sample rate change
+    rx->pixels = duplex ? 4 * tx_dialog_width : width;
+    rx->pixel_samples = g_new(float, rx->pixels);
+    //
+    // These values (including fps) should match those of the TX display
+    //
+    rx->display_detector_mode = DET_PEAK;
+    rx->display_average_time  = 120.0;
+    rx->display_average_mode  = AVG_LOGRECURSIVE;
+    rx_create_analyzer(rx);
+    rx_set_detector(rx);
+    rx_set_average(rx);
+  }
+  return rx;
+}
+
+RECEIVER *rx_create_receiver(int id, int pixels, int width, int height) {
+  if (ui_debug) {
+    ui_print("%s: RXid=%d pixels=%d width=%d height=%d\n", __func__, id, pixels, width, height);
+  } else {
+    t_print("%s: RXid=%d\n", __func__, id);
+  }
+  RECEIVER *rx = malloc(sizeof(RECEIVER));
+  //
+  // This is to guard against programming errors
+  // (missing initializations)
+  //
+  memset(rx, 0, sizeof(RECEIVER));
+  //
+  rx->id = id;
+  g_mutex_init(&rx->mutex);
+  g_mutex_init(&rx->display_mutex);
+  switch (id) {
+  case 0:
+    rx->adc = 0;
+    break;
+  default:
+    switch (device) {
+    case DEVICE_METIS:
+    case DEVICE_OZY:
+    case DEVICE_HERMES:
+    case DEVICE_HERMES_LITE:
+    case DEVICE_HERMES_LITE2:
+    case NEW_DEVICE_ATLAS:
+    case NEW_DEVICE_HERMES:
+      rx->adc = 0;
+      break;
+    default:
+      rx->adc = 1;
+      break;
+    }
+  }
+  t_print("%s: RXid=%d Default ADC=%d\n", __func__, rx->id, rx->adc);
+  rx->sample_rate = 48000;
+  //
+  // For larger sample rates we could use a larger buffer_size, since then
+  // the number of audio samples per batch is rather small. However, the buffer
+  // size is not changed when the sample rate is changed.
+  //
+  rx->buffer_size = 1024;
+  rx->dsp_size = 2048;
+  rx->fft_size = 2048;
+  rx->low_latency = 0;
+  rx->smetermode = SMETER_AVERAGE;
+#ifdef __APPLE__
+  rx->fps = 30;
+#else
+  rx->fps = 10;
+#endif
+  rx->update_timer_id = 0;
+  rx->width = width;
+  rx->height = height;
+  rx->samples = 0;
+  rx->displaying = 0;
+  rx->display_panadapter = 1;
+  rx->display_waterfall = 1;
+  rx->panadapter_high = -55;
+  rx->panadapter_low = -140;
+  rx->panadapter_step = 20;
+  rx->panadapter_peaks_on = 0;
+  rx->panadapter_num_peaks = 3;
+  rx->panadapter_ignore_range_divider = 20;
+  rx->panadapter_ignore_noise_percentile = 80;
+  rx->panadapter_hide_noise_filled = 1;
+  rx->panadapter_peaks_in_passband_filled = 0;
+  rx->panadapter_peaks_as_smeter = 0;
+  rx->panadapter_ovf_on  = 1;
+  rx->panadapter_autoscale_enabled = 0;
+  rx->image_measure = 0;
+  rx->image_measure_hz = 1000.0;
+  rx->image_measure_valid = 0;
+  rx->image_signal_db = -200.0;
+  rx->image_mirror_db = -200.0;
+  rx->image_rejection_db = 0.0;
+  rx->rx_iq_gain = 0.0;
+  rx->rx_iq_phase = 0.0;
+  rx->digi_offset_u = 0;
+  rx->digi_offset_l = 0;
+  strcpy(rx->rx_iq_status, "Idle");
+  rx->pan_peak_preserve = 0;
+  rx->pan_window_type = 5;
+  rx->pan_fft_size = 0;   /* Auto */
+  rx->waterfall_high = -55;
+  rx->waterfall_low = -140;
+  rx->waterfall_automatic = 1;
+  rx->panadapter_noise_margin = -5;
+  rx->panadapter_noise_level = -175;
+  rx->panadapter_smoothed_noise_floor = -175.0;
+  rx->panadapter_smoothed_noise_floor_valid = 0;
+  rx->panadapter_last_noisefloor_calc_time = 0;
+  rx->panadapter_last_noisefloor_measure_us = 0;
+  rx->panadapter_noisefloor_first_run = 1;
+  rx->panadapter_noisefloor_fast_start_count = 5;
+  rx->display_filled = 1;
+  rx->display_gradient = 1;
+  rx->display_detector_mode = DET_AVERAGE;
+  rx->display_average_mode = AVG_LOGRECURSIVE;
+  rx->display_average_time = 250.0;
+  rx->volume = -20.0;
+  rx->tci_rxaudio_scale = 1.0;
+  rx->dither = 0;
+  rx->random = 0;
+  rx->preamp = 0;
+  rx->nb = 0;
+  rx->nr = 0;
+  rx->anf = 0;
+  rx->snb = 0;
+  rx->mnf = 0;
+  rx->mnf_cfreq = 0.0;
+  rx->mnf_fbw = 80.0;
+  rx->nr_agc = 0;                   // NR/NR2/ANF before AGC
+  rx->nr2_gain_method = 2;          // Gamma
+  rx->nr2_npe_method = 0;           // OSMS
+  rx->nr2_ae = 1;                   // Artifact Elimination is "on"
+  rx->nr2_post = 0;
+  rx->nr2_post_taper = 12;
+  rx->nr2_post_nlevel = 15;
+  rx->nr2_post_factor = 15;
+  rx->nr2_post_rate = 5;
+  rx->nr2_trained_threshold = -0.5; // Threshold if gain method is "Trained"
+  rx->nr2_trained_t2 = 0.2;         // t2 value for trained threshold
+  //
+  // It has been reported that the deskHPSDR noise blankers do not function
+  // satisfactorily. I could reproduce this after building an "impulse noise source"
+  // into the HPSDR simulator, and also confirmed that a popular Windows SDR program
+  // has much better NB/NB2 performance.
+  //
+  // Digging into it, I found these SDR programs used NB default parameters *very*
+  // different from those recommended in the WDSP manual: slewtime, hangtime and advtime
+  // default to 0.01 msec, and the threshold to 30 (which is internally multiplied with 0.165
+  // to obtain the WDSP threshold parameter).
+  //
+  rx->nb_tau =     0.00001;       // Slew=0.01    in the DSP menu
+  rx->nb_advtime = 0.00001;       // Lead=0.01    in the DSP menu
+  rx->nb_hang =    0.00001;       // Lag=0.01     in the DSP menu
+  rx->nb_thresh =  4.95;          // Threshold=30 in the DSP menu
+  rx->nb2_mode = 0;               // Zero mode
+  rx->nr4_reduction_amount = 10.0;
+  rx->nr4_smoothing_factor = 0.0;
+  rx->nr4_whitening_factor = 0.0;
+  rx->nr4_noise_rescale = 2.0;
+  rx->nr4_post_filter_threshold = -10.0;
+  const BAND *b = band_get_band(vfo[rx->id].band);
+  rx->alex_antenna = b->alexRxAntenna;
+  if (have_alex_att) {
+    rx->alex_attenuation = b->alexAttenuation;
+  } else {
+    rx->alex_attenuation = 0;
+  }
+  rx->agc = AGC_MEDIUM;
+  rx->agc_gain = 80.0;
+  rx->agc_slope = 35.0;
+  rx->agc_hang_threshold = 0.0;
+  rx->local_audio = 0;
+  g_mutex_init(&rx->local_audio_mutex);
+  rx->local_audio_buffer = NULL;
+#if defined(COREAUDIO) && !defined(PULSEAUDIO) && !defined(ALSA)
+  rx->sidetone_buffer = NULL;
+  atomic_init(&rx->local_audio_buffer_inpt, 0);
+  atomic_init(&rx->local_audio_buffer_outpt, 0);
+  atomic_init(&rx->sidetone_buffer_inpt, 0);
+  atomic_init(&rx->sidetone_buffer_outpt, 0);
+  rx->local_audio_cw_active = 0;
+#endif
+  rx->local_audio_channels = 2;
+  g_strlcpy(rx->audio_name, "NO AUDIO", sizeof(rx->audio_name));
+#ifdef PULSEAUDIO
+  rx->pulseaudio_buffer_size = 0;
+#endif
+  rx->mute_when_not_active = 0;
+  rx->audio_channel = STEREO;
+  rx->audio_device = -1;
+  rx->squelch_enable = 0;
+  rx->local_audio_mute = 0;
+  rx->squelch = 0;
+  rx->binaural = 0;
+  rx->filter_high = 525;
+  rx->filter_low = 275;
+  rx->use_cw_dp_filter = 1;
+  rx->rx_cw_zero_beat_calibration_hz = 15.0;
+  rx_cw_zero_beat_reset(rx);
+  rx->deviation = 2500;
+  rx->mute_radio = 0;
+#ifdef __APPLE__
+  rx->wheel_present = 1;
+#endif
+  rx->zoom = 1;
+  rx->pan = 0;
+  rx->eq_enable = 0;
+  rx->eq_freq[0]  =     0.0;
+  rx->eq_freq[1]  =    50.0;
+  rx->eq_freq[2]  =   100.0;
+  rx->eq_freq[3]  =   200.0;
+  rx->eq_freq[4]  =   500.0;
+  rx->eq_freq[5]  =  1000.0;
+  rx->eq_freq[6]  =  1500.0;
+  rx->eq_freq[7]  =  2000.0;
+  rx->eq_freq[8]  =  2500.0;
+  rx->eq_freq[9]  =  3000.0;
+  rx->eq_freq[10] =  5000.0;
+  rx->eq_freq[11] =  6000.0;
+  rx->eq_freq[12] =  8000.0;
+  rx->eq_gain[0]  = 0.0;
+  rx->eq_gain[1]  = 0.0;
+  rx->eq_gain[2]  = 0.0;
+  rx->eq_gain[3]  = 0.0;
+  rx->eq_gain[4]  = 0.0;
+  rx->eq_gain[5]  = 0.0;
+  rx->eq_gain[6]  = 0.0;
+  rx->eq_gain[7]  = 0.0;
+  rx->eq_gain[8]  = 0.0;
+  rx->eq_gain[9]  = 0.0;
+  rx->eq_gain[10] = 0.0;
+  rx->eq_gain[11] = 0.0;
+  rx->eq_gain[12] = 0.0;
+  //
+  // Overwrite all these values with data from the props file
+  //
+  rx_restore_state(rx);
+  //
+  // If this is the second receiver in P1, over-write sample rate
+  // with that of the first  receiver. Different sample rates in
+  // the props file may arise due to illegal hand editing or
+  // firmware downgrade from P2 to P1.
+  //
+  if (protocol == ORIGINAL_PROTOCOL && id == 1) {
+    rx->sample_rate = receiver[0]->sample_rate;
+  }
+  //
+  // allocate buffers
+  //
+  rx->iq_input_buffer = g_new(double, 2 * rx->buffer_size);
+  rx->pixels = pixels * rx->zoom;
+  rx->pixel_samples = g_new(float, rx->pixels);
+  t_print("%s (after restore): id=%d local_audio=%d\n", __func__, rx->id, rx->local_audio);
+  int scale = rx->sample_rate / 48000;
+  rx->output_samples = rx->buffer_size / scale;
+  rx->audio_output_buffer = g_new(double, 2 * rx->output_samples);
+  //t_print("%s: RXid=%d output_samples=%d audio_output_buffer=%p\n", __func__, rx->id, rx->output_samples, rx->audio_output_buffer);
+  t_print("%s: RXid=%d output_samples=%d\n", __func__, rx->id, rx->output_samples);
+  rx->hz_per_pixel = (double) rx->sample_rate / (double) rx->pixels;
+  // setup wdsp for this receiver
+  t_print("%s: RXid=%d after restore ADC=%d\n", __func__, rx->id, rx->adc);
+  t_print("%s: OpenChannel RXid=%d buffer_size=%d dsp_size=%d fft_size=%d sample_rate=%d\n",
+          __func__,
+          rx->id,
+          rx->buffer_size,
+          rx->dsp_size,
+          rx->fft_size,
+          rx->sample_rate);
+  OpenChannel(rx->id,                     // channel
+              rx->buffer_size,            // in_size
+              rx->dsp_size,               // dsp_size
+              rx->sample_rate,            // input_samplerate
+              48000,                      // dsp rate
+              48000,                      // output_samplerate
+              0,                          // type (0=receive)
+              1,                          // state (run)
+              0.010, 0.025, 0.0, 0.010,   // DelayUp, SlewUp, DelayDown, SlewDown
+              1);                         // Wait for data in fexchange0
+  //
+  // noise blankers
+  //
+  create_anbEXT(rx->id, 1, rx->buffer_size, rx->sample_rate, 0.0001, 0.0001, 0.0001, 0.05, 20);
+  create_nobEXT(rx->id, 1, 0, rx->buffer_size, rx->sample_rate, 0.0001, 0.0001, 0.0001, 0.05, 20);
+  //
+  // Some WDSP settings that are never changed
+  //
+  SetRXABandpassWindow(rx->id, 1);    // use 7-term BlackmanHarris Window
+  SetRXABandpassRun(rx->id, 1);       // enable Bandbass
+  SetRXAAMDSBMode(rx->id, 0);         // use both sidebands in SAM
+  SetRXAPanelRun(rx->id, 1);          // turn on RXA panel
+  SetRXAPanelSelect(rx->id, 3);       // use both I and Q input
+  //
+  // Apply initial settings
+  //
+  rx_set_noise(rx);
+  rx_set_fft_size(rx);
+  rx_set_fft_latency(rx);
+  rx_set_offset(rx, 0);
+  rx_set_af_gain(rx);
+  rx_set_af_binaural(rx);
+  rx_set_equalizer(rx);
+  rx_mode_changed(rx);   // this will call rx_filter_changed() as well
+  rx_create_analyzer(rx);
+  rx_set_detector(rx);
+  rx_set_average(rx);
+  rx_create_visual(rx);
+  if (rx->local_audio) {
+    if (audio_open_output(rx) < 0) {
+      rx->local_audio = 0;
+    } else {
+      rx_audio_output_opened(rx);
+    }
+  }
+  // defer set_agc until here, otherwise the AGC threshold is not computed correctly
+  rx_set_agc(rx);
+  rx->txrxcount = 0;
+  rx->txrxmax = 0;
+  return rx;
+}
+
+void rx_change_adc(const RECEIVER *rx) {
+  schedule_high_priority();
+  schedule_receive_specific();
+}
+
+void rx_set_frequency(RECEIVER *rx, long long f) {
+  if (rx == NULL) {
+    return;
+  }
+  int id = rx_diversity_effective_vfo_id(rx);
+  RECEIVER *changed_rx = rx;
+  if (id != rx->id && id >= 0 && id < receivers && receiver[id] != NULL) {
+    changed_rx = receiver[id];
+  }
+  //
+  // update the effective VFO frequency, and let rx_frequency_changed do the rest.
+  // In Diversity RX mode RX2 is an ADC1 monitor/slave path, so RX2 frequency
+  // operations are redirected to RX1/VFO-A instead of modifying VFO-B.
+  //
+  if (vfo[id].ctun) {
+    vfo[id].ctun_frequency = f;
+  } else {
+    vfo[id].frequency = f;
+  }
+  rx_frequency_changed(changed_rx);
+}
+
+void rx_frequency_changed(RECEIVER *rx) {
+  if (rx == NULL) {
+    return;
+  }
+  int rx_id = rx->id;
+  int id = rx_diversity_effective_vfo_id(rx);
+  if (vfo[id].ctun) {
+    long long frequency = vfo[id].frequency;
+    long long half = (long long) rx->sample_rate / 2LL;
+    long long rx_low = vfo[id].ctun_frequency + rx->filter_low;
+    long long rx_high = vfo[id].ctun_frequency + rx->filter_high;
+    if (rx_low < frequency - half || rx_high > frequency + half) {
+      //
+      // Perhaps this is paranoia, but a "legal" VFO might turn
+      // into an "illegal" when when reducing the sample rate,
+      // thus narrowing the CTUN window.
+      // If the "filter window" has left the CTUN range, CTUN is
+      // reset such that the CTUN center frequency is placed at
+      // the new frequency
+      //
+      t_print("%s: CTUN freq out of range\n", __func__);
+      vfo[id].frequency = vfo[id].ctun_frequency;
+    }
+    if (rx->zoom > 1) {
+      //
+      // Adjust PAN if new filter width has moved out of
+      // current display range
+      // TODO: what if this happens with CTUN "off"?
+      //
+      long long min_display = frequency - half + (long long)((double) rx->pan * rx->hz_per_pixel);
+      long long max_display = min_display + (long long)((double) rx->width * rx->hz_per_pixel);
+      if (rx_low <= min_display) {
+        rx->pan = rx->pan - (rx->width / 2);
+        if (rx->pan < 0) { rx->pan = 0; }
+        set_pan(rx_id, rx->pan);
+      } else if (rx_high >= max_display) {
+        rx->pan = rx->pan + (rx->width / 2);
+        if (rx->pan > (rx->pixels - rx->width)) { rx->pan = rx->pixels - rx->width; }
+        set_pan(rx_id, rx->pan);
+      }
+    }
+    //
+    // Compute new offset
+    //
+    vfo[id].offset = vfo[id].ctun_frequency - vfo[id].frequency;
+    if (vfo[id].rit_enabled) {
+      vfo[id].offset += vfo[id].rit;
+    }
+  } else {
+    //
+    // This may be part of a CTUN ON->OFF transition
+    //
+    vfo[id].offset = 0;
+    if (vfo[id].rit_enabled) {
+      vfo[id].offset = vfo[id].rit;
+    }
+  }
+  //
+  // To make this bullet-proof, report the (possibly new) offset to WDSP
+  // and send the (possibly changed) frequency to the radio in any case.
+  //
+  rx_set_offset(rx, vfo[id].offset - rx_get_mode_dc_offset(id) + rx_get_digi_monitor_offset(id));
+  switch (protocol) {
+  case ORIGINAL_PROTOCOL:
+    // P1 does this automatically
+    break;
+  case NEW_PROTOCOL:
+    schedule_high_priority(); // send new frequency
+    break;
+  }
+  if (rx_diversity_rx_active() && rx_id == 0 && receivers > 1 && receiver[1] != NULL) {
+    rx_frequency_changed(receiver[1]);
+  }
+}
+
+void rx_filter_changed(RECEIVER *rx) {
+  rx_set_filter(rx);
+  if (rx_diversity_rx_active() && rx != NULL && rx->id == 0 && receivers > 1 && receiver[1] != NULL) {
+    rx_set_filter(receiver[1]);
+  }
+  if (can_transmit) {
+    if ((transmitter->use_rx_filter && rx == active_receiver) || vfo_get_tx_mode() == modeFMN) {
+      tx_set_filter(transmitter);
+    }
+  }
+  //
+  // TODO: Filter window has possibly moved outside CTUN range
+  //
+}
+
+void rx_mode_changed(RECEIVER *rx) {
+  rx_set_mode(rx);
+  if (rx_diversity_rx_active() && rx != NULL && rx->id == 0 && receivers > 1 && receiver[1] != NULL) {
+    rx_set_mode(receiver[1]);
+  }
+  rx_filter_changed(rx);
+}
+
+void rx_vfo_changed(RECEIVER *rx) {
+  //
+  // Called when the VFO controlling rx has changed,
+  // e.g. after a "swap VFO" action
+  //
+  rx_frequency_changed(rx);
+  rx_mode_changed(rx);
+}
+
+
+static gboolean rx_diversity_rx_active(void) {
+  return diversity_enabled && !radio_is_transmitting() && !radio_ptt;
+}
+
+static int rx_diversity_effective_vfo_id(const RECEIVER *rx) {
+  if (rx != NULL && rx_diversity_rx_active() && rx->id == 1) {
+    return 0;
+  }
+  return rx != NULL ? rx->id : 0;
+}
+
+static long long rx_get_effective_frequency(const RECEIVER *rx) {
+  int id = rx_diversity_effective_vfo_id(rx);
+  return vfo[id].ctun ? vfo[id].ctun_frequency : vfo[id].frequency;
+}
+
+static int rx_diversity_effective_sample_rate(const RECEIVER *rx, int sample_rate) {
+  if (rx != NULL && rx_diversity_rx_active() && rx->id == 1 && receiver[0] != NULL) {
+    return receiver[0]->sample_rate;
+  }
+  return sample_rate;
+}
+
+static void rx_diversity_sync_aux_receiver_sample_rate(const RECEIVER *rx) {
+  if (rx == NULL || !rx_diversity_rx_active() || rx->id != 0 || receivers <= 1 || receiver[1] == NULL) {
+    return;
+  }
+  if (receiver[1]->sample_rate != rx->sample_rate) {
+    t_print("%s: syncing RX2 sample rate from %d to %d for diversity\n",
+            __func__, receiver[1]->sample_rate, rx->sample_rate);
+    rx_change_sample_rate(receiver[1], rx->sample_rate);
+  }
+}
+
+static void rx_cw_zero_beat_reset(RECEIVER *rx) {
+  rx->cw_zero_beat_active = 0;
+  rx->cw_zero_beat_count = 0;
+  rx->cw_zero_beat_target_count = 0;
+  for (int i = 0; i < RX_CW_ZERO_BEAT_BINS; i++) {
+    rx->cw_zero_beat_coeff[i] = 0.0;
+    rx->cw_zero_beat_q1[i] = 0.0;
+    rx->cw_zero_beat_q2[i] = 0.0;
+  }
+}
+
+static void rx_cw_zero_beat_finish(RECEIVER *rx) {
+  int vfo_id = rx_diversity_effective_vfo_id(rx);
+  int mode = vfo[vfo_id].mode;
+  double max_power = 0.0;
+  double power_sum = 0.0;
+  int max_bin = -1;
+  for (int i = 0; i < RX_CW_ZERO_BEAT_BINS; i++) {
+    double power = (rx->cw_zero_beat_q1[i] * rx->cw_zero_beat_q1[i])
+                   + (rx->cw_zero_beat_q2[i] * rx->cw_zero_beat_q2[i])
+                   - (rx->cw_zero_beat_coeff[i] * rx->cw_zero_beat_q1[i] * rx->cw_zero_beat_q2[i]);
+    power_sum += power;
+    if (power > max_power) {
+      max_power = power;
+      max_bin = i;
+    }
+  }
+  double avg_power = power_sum / (double) RX_CW_ZERO_BEAT_BINS;
+  if (max_bin < 0 || max_power <= 1.0e-12 || max_power < (avg_power * RX_CW_ZERO_BEAT_MIN_RATIO)) {
+    t_print("%s: RX%d no stable CW peak detected max=%.9g avg=%.9g\n",
+            __func__,
+            rx->id,
+            max_power,
+            avg_power);
+    rx_cw_zero_beat_reset(rx);
+    return;
+  }
+  double detected = (double)(RX_CW_ZERO_BEAT_MIN_HZ + (max_bin * RX_CW_ZERO_BEAT_STEP_HZ));
+  double target = (double) cw_keyer_sidetone_frequency + rx->rx_cw_zero_beat_calibration_hz;
+  double delta = detected - target;
+  long long correction = (long long) lrint(delta);
+  if (correction > RX_CW_ZERO_BEAT_MAX_CORRECTION_HZ || correction < -RX_CW_ZERO_BEAT_MAX_CORRECTION_HZ) {
+    t_print("%s: RX%d correction out of range detected=%.1f target=%.1f delta=%.1f\n",
+            __func__,
+            rx->id,
+            detected,
+            target,
+            delta);
+    rx_cw_zero_beat_reset(rx);
+    return;
+  }
+  if (correction == 0) {
+    t_print("%s: RX%d already zero beat detected=%.1f target=%.1f\n",
+            __func__,
+            rx->id,
+            detected,
+            target);
+    rx_cw_zero_beat_reset(rx);
+    return;
+  }
+  long long old_frequency = rx_get_effective_frequency(rx);
+  long long new_frequency = old_frequency;
+  if (mode == modeCWU) {
+    new_frequency += correction;
+  } else if (mode == modeCWL) {
+    new_frequency -= correction;
+  } else {
+    rx_cw_zero_beat_reset(rx);
+    return;
+  }
+  t_print("%s: RX%d mode=%d detected=%.1f target=%.1f delta=%.1f correction=%lld old=%lld new=%lld\n",
+          __func__,
+          rx->id,
+          mode,
+          detected,
+          target,
+          delta,
+          correction,
+          old_frequency,
+          new_frequency);
+  rx_set_frequency(rx, new_frequency);
+  g_idle_add(ext_vfo_update, NULL);
+  rx_cw_zero_beat_reset(rx);
+}
+
+static void rx_cw_zero_beat_sample(RECEIVER *rx, double sample) {
+  if (!rx->cw_zero_beat_active) {
+    return;
+  }
+  if (rx != active_receiver || radio_is_transmitting()) {
+    rx_cw_zero_beat_reset(rx);
+    return;
+  }
+  int vfo_id = rx_diversity_effective_vfo_id(rx);
+  int mode = vfo[vfo_id].mode;
+  if (mode != modeCWU && mode != modeCWL) {
+    rx_cw_zero_beat_reset(rx);
+    return;
+  }
+  for (int i = 0; i < RX_CW_ZERO_BEAT_BINS; i++) {
+    double q0 = sample + (rx->cw_zero_beat_coeff[i] * rx->cw_zero_beat_q1[i]) - rx->cw_zero_beat_q2[i];
+    rx->cw_zero_beat_q2[i] = rx->cw_zero_beat_q1[i];
+    rx->cw_zero_beat_q1[i] = q0;
+  }
+  rx->cw_zero_beat_count++;
+  if (rx->cw_zero_beat_count >= rx->cw_zero_beat_target_count) {
+    rx_cw_zero_beat_finish(rx);
+  }
+}
+
+void rx_cw_zero_beat_start(RECEIVER *rx) {
+  if (rx == NULL) {
+    return;
+  }
+  int vfo_id = rx_diversity_effective_vfo_id(rx);
+  int mode = vfo[vfo_id].mode;
+  if (rx != active_receiver || (mode != modeCWU && mode != modeCWL) || radio_is_transmitting()) {
+    t_print("%s: RX%d rejected active=%d mode=%d xmit=%d\n",
+            __func__,
+            rx->id,
+            rx == active_receiver,
+            mode,
+            radio_is_transmitting());
+    return;
+  }
+  rx_cw_zero_beat_reset(rx);
+  rx->cw_zero_beat_target_count = (int)((RX_CW_ZERO_BEAT_OUTPUT_RATE * RX_CW_ZERO_BEAT_MS) / 1000.0);
+  for (int i = 0; i < RX_CW_ZERO_BEAT_BINS; i++) {
+    double freq = (double)(RX_CW_ZERO_BEAT_MIN_HZ + (i * RX_CW_ZERO_BEAT_STEP_HZ));
+    rx->cw_zero_beat_coeff[i] = 2.0 * cos((2.0 * M_PI * freq) / RX_CW_ZERO_BEAT_OUTPUT_RATE);
+  }
+  rx->cw_zero_beat_active = 1;
+  t_print("%s: RX%d started target=%dHz range=%d..%dHz step=%dHz samples=%d\n",
+          __func__,
+          rx->id,
+          cw_keyer_sidetone_frequency,
+          RX_CW_ZERO_BEAT_MIN_HZ,
+          RX_CW_ZERO_BEAT_MAX_HZ,
+          RX_CW_ZERO_BEAT_STEP_HZ,
+          rx->cw_zero_beat_target_count);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////
+//
+// rx_add_iq_samples (rx_add_div_iq_samples),  rx_full_buffer, and rx_process_buffer
+// form the "RX engine".
+//
+//////////////////////////////////////////////////////////////////////////////////////
+
+static void rx_process_buffer(RECEIVER *rx) {
+  double scale = 0.6 * pow(10.0, -0.05 * rx->volume);
+  double unscale = 1.0 / scale;
+  int tci_rx_export = tci_audio_is_active();
+  guint tci_rx_frames = 0;
+  float tci_rx_samples[rx->output_samples * TCI_AUDIO_CHANNELS];
+  // Without DUPLEX; xmit will always be false.
+  int xmit = radio_is_transmitting();
+  for (int i = 0; i < rx->output_samples; i++) {
+    double left_sample = rx->audio_output_buffer[i * 2];
+    double right_sample = rx->audio_output_buffer[(i * 2) + 1];
+    rx_cw_zero_beat_sample(rx, 0.5 * (left_sample + right_sample));
+    if (rx == active_receiver) {
+      //
+      // If re-playing captured data locally, replace incoming
+      // audio samples by captured data (active RX only)
+      //
+      if (capture_state == CAP_REPLAY) {
+        if (capture_replay_pointer < capture_record_pointer) {
+          left_sample = right_sample = 0.70710678 * unscale * capture_data[capture_replay_pointer++];
+        } else {
+          //
+          // switching the state to REPLAY_DONE takes care that the
+          // REPLAY switch is "pressed" only once
+          capture_state = CAP_REPLAY_DONE;
+          if (capture_trigger_action == CAPTURE || capture_trigger_action == REPLAY) {
+            schedule_action(REPLAY, PRESSED, 0);
+          } else {
+            capture_state = CAP_AVAIL; // VK: Ende, kein Re-Dispatch
+          }
+        }
+      }
+      //
+      // If CAPTURing, record the audio samples *before*
+      // manipulating them
+      //
+      if (capture_state == CAP_RECORDING) {
+        if (capture_record_pointer < capture_max) {
+          // double scale = 0.6 * pow(10.0, -0.05 * rx->volume);
+          capture_data[capture_record_pointer++] = scale * (left_sample + right_sample);
+        } else {
+          // switching the state to RECORD_DONE takes care that the
+          // CAPTURE switch is "pressed" only once
+          capture_state = CAP_RECORD_DONE;
+          if (capture_trigger_action == CAPTURE || capture_trigger_action == REPLAY) {
+            schedule_action(CAPTURE, PRESSED, 0);
+          } else {
+            capture_state = CAP_AVAIL; // VK: Ende, kein Re-Dispatch
+          }
+        }
+      }
+    }
+    if (xmit && mute_rx_while_transmitting) {
+      left_sample = 0.0;
+      right_sample = 0.0;
+    }
+    if (rx->mute_radio || (rx != active_receiver && rx->mute_when_not_active)) {
+      left_sample = 0.0;
+      right_sample = 0.0;
+    }
+    switch (rx->audio_channel) {
+    case STEREO:
+      break;
+    case LEFT:
+      right_sample = 0.0;
+      break;
+    case RIGHT:
+      left_sample = 0.0;
+      break;
+    }
+    if (left_sample >  1.0f) { left_sample =  1.0f; }
+    if (left_sample < -1.0f) { left_sample = -1.0f; }
+    short left_audio_sample  = (short)(left_sample  * 32767.0f);
+    if (right_sample >  1.0f) { right_sample =  1.0f; }
+    if (right_sample < -1.0f) { right_sample = -1.0f; }
+    short right_audio_sample = (short)(right_sample * 32767.0f);
+    if (rx->local_audio) {
+      audio_write(rx, (float) left_sample, (float) right_sample);
+    }
+    if (rx == active_receiver) {
+      switch (protocol) {
+      case ORIGINAL_PROTOCOL:
+        old_protocol_audio_samples(left_audio_sample, right_audio_sample);
+        break;
+      case NEW_PROTOCOL:
+        new_protocol_audio_samples(left_audio_sample, right_audio_sample);
+        break;
+      }
+    }
+    if (tci_rx_export) {
+      tci_rx_samples[(tci_rx_frames * TCI_AUDIO_CHANNELS)] = (float)(left_sample * rx->tci_rxaudio_scale);
+      tci_rx_samples[(tci_rx_frames * TCI_AUDIO_CHANNELS) + 1] = (float)(right_sample * rx->tci_rxaudio_scale);
+      tci_rx_frames++;
+    }
+  }
+  if (tci_rx_export && tci_rx_frames > 0) {
+    tci_audio_rx_block(rx, tci_rx_samples, tci_rx_frames);
+  }
+}
+
+void rx_full_buffer(RECEIVER *rx) {
+  int error;
+  //t_print("%s: rx=%p\n",__func__,rx);
+  //
+  // rx->mutex is locked if a sample rate change is currently going on,
+  // in this case we should not block the receiver thread
+  //
+  if (g_mutex_trylock(&rx->mutex)) {
+    //
+    // noise blanker works on original IQ samples with input sample rate
+    //
+    switch (rx->nb) {
+    case 1:
+      xanbEXT(rx->id, rx->iq_input_buffer, rx->iq_input_buffer);
+      break;
+    case 2:
+      xnobEXT(rx->id, rx->iq_input_buffer, rx->iq_input_buffer);
+      break;
+    default:
+      // do nothing
+      break;
+    }
+    tci_rx_iq_block(rx, rx->iq_input_buffer, rx->buffer_size);
+    fexchange0(rx->id, rx->iq_input_buffer, rx->audio_output_buffer, &error);
+    if (error != 0) {
+      t_print("%s: id=%d fexchange0: error=%d\n", __func__, rx->id, error);
+    }
+    if (rx->displaying) {
+      g_mutex_lock(&rx->display_mutex);
+      Spectrum0(1, rx->id, 0, 0, rx->iq_input_buffer);
+      g_mutex_unlock(&rx->display_mutex);
+    }
+    rx_process_buffer(rx);
+    g_mutex_unlock(&rx->mutex);
+  }
+}
+
+static void rx_apply_iq_correction(const RECEIVER *rx, double *i_sample, double *q_sample) {
+  double gain;
+  double phase;
+  double c;
+  double s;
+  double i;
+  double q;
+  if (rx == NULL || i_sample == NULL || q_sample == NULL) {
+    return;
+  }
+  if (rx->rx_iq_gain == 0.0 && rx->rx_iq_phase == 0.0) {
+    return;
+  }
+  gain = pow(10.0, rx->rx_iq_gain / 20.0);
+  phase = rx->rx_iq_phase * M_PI / 180.0;
+  c = cos(phase);
+  if (fabs(c) < 1.0e-12) {
+    return;
+  }
+  s = sin(phase);
+  i = *i_sample;
+  q = *q_sample;
+  *i_sample = i;
+  *q_sample = ((q * gain) + (i * s)) / c;
+}
+
+void rx_add_iq_samples(RECEIVER *rx, double i_sample, double q_sample) {
+  //
+  // At the end of a TX/RX transition, txrxcount is set to zero,
+  // and txrxmax to some suitable value.
+  // Then, the first txrxmax RXIQ samples are "silenced"
+  // This is necessary on systems where RX feedback samples
+  // from cross-talk at the TRX relay arrive with some delay.
+  //
+  // If txrxmax is zero, no "silencing" takes place here,
+  // this is the case for radios not showing this problem,
+  // and generally if in CW mode or using duplex.
+  //
+  if (rx->txrxcount < rx->txrxmax) {
+    i_sample = 0.0;
+    q_sample = 0.0;
+    rx->txrxcount++;
+  } else {
+    rx_apply_iq_correction(rx, &i_sample, &q_sample);
+  }
+  rx->iq_input_buffer[rx->samples * 2] = i_sample;
+  rx->iq_input_buffer[(rx->samples * 2) + 1] = q_sample;
+  rx->samples = rx->samples + 1;
+  if (rx->samples >= rx->buffer_size) {
+    rx_full_buffer(rx);
+    rx->samples = 0;
+  }
+}
+
+void rx_add_div_iq_samples(RECEIVER *rx, double i0, double q0, double i1, double q1) {
+  //
+  // Note that we sum the second channel onto the first one
+  // and then simply pass to add_iq_samples
+  //
+  double i_sample = i0 + (div_cos * i1 - div_sin * q1);
+  double q_sample = q0 + (div_sin * i1 + div_cos * q1);
+  rx_add_iq_samples(rx, i_sample, q_sample);
+}
+
+void rx_update_zoom(RECEIVER *rx) {
+  //
+  // This is called whenever rx->zoom or rx->width changes,
+  // since in both cases the analyzer must be restarted.
+  //
+  rx->pixels = rx->width * rx->zoom;
+  rx->hz_per_pixel = (double) rx->sample_rate / (double) rx->pixels;
+  if (rx->zoom == 1) {
+    rx->pan = 0;
+  } else {
+    int vfo_id = rx_diversity_effective_vfo_id(rx);
+    if (vfo[vfo_id].ctun) {
+      long long min_frequency = vfo[vfo_id].frequency - (long long)(rx->sample_rate / 2);
+      rx->pan = ((vfo[vfo_id].ctun_frequency - min_frequency) / rx->hz_per_pixel) - (rx->width / 2);
+      if (rx->pan < 0) { rx->pan = 0; }
+      if (rx->pan > (rx->pixels - rx->width)) { rx->pan = rx->pixels - rx->width; }
+    } else {
+      rx->pan = (rx->pixels / 2) - (rx->width / 2);
+    }
+  }
+  if (rx->pixel_samples != NULL) {
+    g_free(rx->pixel_samples);
+  }
+  rx->pixel_samples = g_new(float, rx->pixels);
+  rx_set_analyzer(rx);
+}
+
+void rx_set_filter(RECEIVER *rx) {
+  //
+  // - set filter edges and deviation in rx
+  // - determine on the use of the CW peak filter
+  // - re-caloc AGC since this depends on the filter width
+  //
+  int id = rx_diversity_effective_vfo_id(rx);
+  int m = vfo[id].mode;
+  FILTER *mode_filters = filters[m];
+  const FILTER *filter = &mode_filters[vfo[id].filter]; // ignored in FMN
+  int have_peak = 0;
+  switch (m) {
+  case modeCWL:
+    //
+    // translate CW filter edges to the CW pitch frequency
+    //
+    rx->filter_low = -cw_keyer_sidetone_frequency + filter->low;
+    rx->filter_high = -cw_keyer_sidetone_frequency + filter->high;
+    have_peak = vfo[id].cwAudioPeakFilter;
+    break;
+  case modeCWU:
+    rx->filter_low = cw_keyer_sidetone_frequency + filter->low;
+    rx->filter_high = cw_keyer_sidetone_frequency + filter->high;
+    have_peak = vfo[id].cwAudioPeakFilter;
+    break;
+  case  modeFMN:
+    //
+    // for FM filter edges are calculated from the deviation,
+    // Using Carson's rule and assuming max. audio  freq  of 3000 Hz
+    //
+    rx->deviation = vfo[id].deviation;
+    rx->filter_low = - (3000 + rx->deviation);
+    rx->filter_high = (3000 + rx->deviation);
+    break;
+  default:
+    rx->filter_low = filter->low;
+    rx->filter_high = filter->high;
+    break;
+  }
+  rx_set_deviation(rx);
+  rx_set_bandpass(rx);
+  rx_set_cw_peak(rx, have_peak, (double) cw_keyer_sidetone_frequency);
+  rx_set_agc(rx);
+}
+
+void rx_set_framerate(RECEIVER *rx) {
+  //
+  // When changing the frame rate, the RX display update timer needs
+  // be restarted, the averaging re-calculated, and the analyzer
+  // parameter re-set
+  //
+  rx_set_displaying(rx);
+  rx_set_average(rx);
+  rx_set_analyzer(rx);
+}
+
+///////////////////////////////////////////////////////
+//
+// WDSP wrappers.
+// Calls to WDSP functions above this line should be
+// kept to a minimum, and in general a call to a WDSP
+// function should only occur *once* in the program,
+// at best in a wrapper.
+//
+// WDSPRXDEBUG should only be activated for debugging
+//
+// TODO: If the radio is remote, make them a no-op.
+//
+////////////////////////////////////////////////////////
+
+void rx_change_sample_rate(RECEIVER *rx, int sample_rate) {
+  // ToDo: move this outside of the WDSP wrappers and encapsulate WDSP calls
+  //       in this function
+  sample_rate = rx_diversity_effective_sample_rate(rx, sample_rate);
+  if (rx != NULL && rx->sample_rate == sample_rate) {
+    rx_diversity_sync_aux_receiver_sample_rate(rx);
+    return;
+  }
+  g_mutex_lock(&rx->mutex);
+  rx->sample_rate = sample_rate;
+  schedule_receive_specific();
+  int scale = rx->sample_rate / 48000;
+  rx->output_samples = rx->buffer_size / scale;
+  rx->hz_per_pixel = (double) rx->sample_rate / (double) rx->width;
+  t_print("%s: id=%d rate=%d scale=%d buffer_size=%d output_samples=%d\n", __func__, rx->id, sample_rate, scale,
+          rx->buffer_size, rx->output_samples);
+  //
+  // In the old protocol, the RX_FEEDBACK sample rate is tied
+  // to the radio's sample rate and therefore may vary.
+  // Since there is no downstream WDSP receiver her, the only thing
+  // we have to do here is to adapt the spectrum display of the
+  // feedback and *must* then return (rx->id is not a WDSP channel!)
+  //
+  if (rx->id == PS_RX_FEEDBACK && protocol == ORIGINAL_PROTOCOL) {
+    rx->pixels = duplex ? 4 * tx_dialog_width : rx->width;
+    g_free(rx->pixel_samples);
+    rx->pixel_samples = g_new(float, rx->pixels);
+    rx_set_analyzer(rx);
+    t_print("%s: PS RX FEEDBACK: id=%d rate=%d buffer_size=%d output_samples=%d\n",
+            __func__, rx->id, rx->sample_rate, rx->buffer_size, rx->output_samples);
+    g_mutex_unlock(&rx->mutex);
+    return;
+  }
+  //
+  // re-calculate AGC line for panadapter since it depends on sample rate
+  //
+  GetRXAAGCThresh(rx->id, &rx->agc_thresh, 4096.0, (double) rx->sample_rate);
+  //
+  // If the sample rate is reduced, the size of the audio output buffer must ber increased
+  //
+  if (rx->audio_output_buffer != NULL) {
+    g_free(rx->audio_output_buffer);
+  }
+  rx->audio_output_buffer = g_new(double, 2 * rx->output_samples);
+  rx_off(rx);
+  rx_set_analyzer(rx);
+  SetInputSamplerate(rx->id, sample_rate);
+  SetEXTANBSamplerate(rx->id, sample_rate);
+  SetEXTNOBSamplerate(rx->id, sample_rate);
+  rx_on(rx);
+  //
+  // for a non-PS receiver, adjust pixels and hz_per_pixel depending on the zoom value
+  //
+  rx->pixels = rx->width * rx->zoom;
+  rx->hz_per_pixel = (double) rx->sample_rate / (double) rx->pixels;
+  g_mutex_unlock(&rx->mutex);
+  t_print("%s: RXid=%d rate=%d buffer_size=%d output_samples=%d\n", __func__, rx->id, rx->sample_rate,
+          rx->buffer_size, rx->output_samples);
+  rx_diversity_sync_aux_receiver_sample_rate(rx);
+}
+
+void rx_close(const RECEIVER *rx) {
+  CloseChannel(rx->id);
+}
+
+int rx_get_pixels(RECEIVER *rx) {
+  int rc;
+  GetPixels(rx->id, 0, rx->pixel_samples, &rc);
+  return rc;
+}
+
+double rx_get_smeter(const RECEIVER *rx) {
+  double level;
+  switch (rx->smetermode) {
+  case SMETER_PEAK:
+    level = GetRXAMeter(rx->id, RXA_S_PK);
+    break;
+  case SMETER_AVERAGE:
+  default:
+    level = GetRXAMeter(rx->id, RXA_S_AV);
+    break;
+  }
+  return level;
+}
+
+void rx_create_analyzer(const RECEIVER *rx) {
+  //
+  // After the analyzer has been created, its parameters
+  // are set via rx_set_analyzer
+  //
+  int rc;
+  XCreateAnalyzer(rx->id, &rc, 262144, 1, 1, NULL);
+  if (rc != 0) {
+    t_print("CreateAnalyzer failed for RXid=%d\n", rx->id);
+  } else {
+    rx_set_analyzer(rx);
+  }
+}
+
+void rx_set_analyzer(const RECEIVER *rx) {
+  //
+  // The analyzer depends on the framerate (fps), the
+  // number of pixels, and the sample rate, as well as the
+  // buffer size (this is constant).
+  // So rx_set_analyzer() has to be called whenever fps, pixels,
+  // or sample_rate change in rx
+  //
+  int flp[] = {0};
+  const double keep_time = 0.1;
+  const int n_pixout = 1;
+  const int spur_elimination_ffts = 1;
+  const int data_type = 1;
+  const double kaiser_pi = 14.0;
+  double fscLin = 0;
+  double fscHin = 0;
+  const int stitches = 1;
+  const int calibration_data_set = 0;
+  const double span_min_freq = 0.0;
+  const double span_max_freq = 0.0;
+  const int clip = 0;
+  const int window_type = rx->pan_window_type; // 5 = Kaiser, 2 = Hann
+  int afft_size;
+  const int pixels = rx->pixels;
+  const int Pan_NormOneHz = 1; // 0 = do not normalize; 1 = normalize to one Hz bandwidth
+  //
+  // RX FEEDBACK receiver:
+  // Match the analyzer span to the normal TX panadapter. The TX display uses
+  // a filter-dependent span in sideband modes; keeping the feedback analyzer
+  // fixed at 24 kHz compresses the PureSignal monitor trace when the display
+  // changes to a 6 or 12 kHz span.
+  //
+  if (rx->id == PS_RX_FEEDBACK) {
+    double display_span = transmitter != NULL ? tx_display_span_hz(transmitter) : 24000.0;
+    double display_half_span = 0.5 * display_span;
+    afft_size = 16384;
+    fscLin = afft_size * (0.5 - display_half_span / rx->sample_rate);
+    fscHin = afft_size * (0.5 - display_half_span / rx->sample_rate);
+  } else {
+    if (rx->pan_fft_size > 0) {
+      afft_size = rx->pan_fft_size;
+      if (afft_size != 16384 &&
+          afft_size != 32768 &&
+          afft_size != 65536 &&
+          afft_size != 131072 &&
+          afft_size != 262144) {
+        t_print("%s: invalid pan_fft_size=%d, fallback to 16384\n", __func__, afft_size);
+        afft_size = 16384;
+      }
+    } else {
+      int want = rx->width * rx->zoom;
+      if (want <= 16384) { afft_size = 16384; }
+      else if (want <= 32768) { afft_size = 32768; }
+      else if (want <= 65536) { afft_size = 65536; }
+      else if (want <= 131072) { afft_size = 131072; }
+      else { afft_size = 262144; }
+    }
+  }
+  int max_w = afft_size + (int) min(keep_time * (double) rx->sample_rate,
+                                    keep_time * (double) afft_size * (double) rx->fps);
+  int overlap = (int) fmax(0.0, ceil(afft_size - (double) rx->sample_rate / (double) rx->fps));
+  t_print("RX:WDSP SetAnalyzer id=%d input_samples=%d overlap=%d pixels=%d window_type=%d afft_size=%d bin_width=%.3f Hz\n",
+          rx->id,
+          rx->buffer_size,
+          overlap, rx->pixels, window_type, afft_size, (double) rx->sample_rate / (double) afft_size);
+  SetAnalyzer(rx->id,
+              n_pixout,
+              spur_elimination_ffts,                // number of LO frequencies = number of ffts used in elimination
+              data_type,                            // 0 for real input data (I only); 1 for complex input data (I & Q)
+              flp,                                  // vector with one element for each LO frequency, 1 if high-side LO, 0 otherwise
+              afft_size,                            // size of the fft, i.e., number of input samples
+              rx->buffer_size,                      // number of samples transferred for each OpenBuffer()/CloseBuffer()
+              window_type,                          // integer specifying which window function to use
+              kaiser_pi,                            // PiAlpha parameter for Kaiser window
+              overlap,                              // number of samples each fft (other than the first) is to re-use from the previous
+              clip,                                 // number of fft output bins to be clipped from EACH side of each sub-span
+              fscLin,                               // number of bins to clip from low end of entire span
+              fscHin,                               // number of bins to clip from high end of entire span
+              pixels,                               // number of pixel values to return.  may be either <= or > number of bins
+              stitches,                             // number of sub-spans to concatenate to form a complete span
+              calibration_data_set,                 // identifier of which set of calibration data to use
+              span_min_freq,                        // frequency at first pixel value
+              span_max_freq,                        // frequency at last pixel value
+              max_w                                 // max samples to hold in input ring buffers
+             );
+  // The spectrum is normalized to a "bin width" of sample_rate / afft_size,
+  // which is smaller than the frequency width of one pixel which is sample_rate / (width * zoom).
+  if (rx->id != PS_RX_FEEDBACK) {  // exclude the PS feedback RX ! Otherwise the PS Mon is broken !
+    //
+    // A normalization to "1 pixel" is accomplished with the following two calls. Note the noise
+    // floor then depends on the zoom factor (that is, the frequency width of one pixel)
+    //
+    // WDSP: void SetDisplayNormOneHz (int disp, int pixout, int norm)
+    // disp: identifier for the Display.
+    // pixout: identifier of the pixel output for which the parameter is being set.
+    // norm: 0 = do not normalize; 1 = normalize to one Hz bandwidth.
+    SetDisplayNormOneHz(rx->id, 0, Pan_NormOneHz);
+    SetDisplaySampleRate(rx->id, rx->width * rx->zoom);
+    //
+    // In effect, this "lifts" the spectrum (in dB) by 10*log10(afft_size/(width*zoom)).
+    //
+    // One can also normalise to 1 Hz,in the case the second parameter to SetDisplaySampleRate
+    // must be (the true) rx->sample_rate, then WDSP adds 10*log10(afft_size/sample_rate) which
+    // normally means the spectrum is down-shifted quite a bit.
+    //
+    // SetDisplaySampleRate(rx->id, rx->sample_rate);
+  }
+  t_print("RX:WDSP SetDisplaySampleRate rx->id=%d rx->width=%d rx->zoom=%d rx->sample_rate=%d\n", rx->id, rx->width,
+          rx->zoom, rx->sample_rate);
+}
+
+void rx_off(const RECEIVER *rx) {
+  // switch receiver OFF, wait until slew-down completet
+  SetChannelState(rx->id, 0, 1);
+}
+
+void rx_on(const RECEIVER *rx) {
+  // switch receiver ON
+  SetChannelState(rx->id, 1, 0);
+}
+
+int rx_binaural_allowed(const RECEIVER *rx) {
+  int mode;
+  if (rx == NULL) {
+    return 0;
+  }
+  if (rx->id < 0 || rx->id >= receivers) {
+    return 0;
+  }
+  if (rx->local_audio_channels <= 1) {
+    return 0;
+  }
+  int vfo_id = rx_diversity_effective_vfo_id(rx);
+  mode = vfo[vfo_id].mode;
+  return (mode != modeDIGU && mode != modeDIGL);
+}
+
+void rx_set_af_binaural(const RECEIVER *rx) {
+  int state;
+  if (rx == NULL) {
+    return;
+  }
+  if (rx->id < 0 || rx->id >= receivers) {
+    return;
+  }
+  state = rx_binaural_allowed(rx) ? rx->binaural : 0;
+  if (!state && rx->binaural) {
+    ((RECEIVER *) rx)->binaural = 0;
+  }
+  SetRXAPanelBinaural(rx->id, state);
+}
+
+void rx_audio_output_opened(RECEIVER *rx) {
+  if (rx == NULL) {
+    return;
+  }
+  int old_binaural = rx->binaural;
+  rx_set_af_binaural(rx);
+  if (old_binaural != rx->binaural) {
+    t_print("%s: RX%d disabling binaural for %d-channel output device %s\n",
+            __func__, rx->id, rx->local_audio_channels, rx->audio_name);
+    tci_rx_bin_enable_changed(rx->id);
+  }
+  if (rx == active_receiver) {
+    update_slider_binaural_btn();
+  }
+}
+
+void rx_set_af_gain(const RECEIVER *rx) {
+  //
+  // volume is in dB from 0 ... -40 and this is
+  // converted to  an amplitude from 0 ... 1.
+  //
+  // volume < -39.5  ==> amplitude = 0
+  // volume >   0.0  ==> amplitude = 1
+  //
+  double volume = rx->volume;
+  double amplitude;
+  if (volume <= -39.5) {
+    amplitude = 0.0;
+  } else if (volume > 0.0) {
+    amplitude = 1.0;
+  } else {
+    amplitude = pow(10.0, 0.05 * volume);
+  }
+  SetRXAPanelGain1(rx->id, amplitude);
+}
+
+void rx_set_agc(RECEIVER *rx) {
+  //
+  // Apply the AGC settings stored in rx.
+  // Calculate new AGC and "hang" line levels
+  // and store these in rx.
+  //
+  int id = rx->id;
+  SetRXAAGCMode(id, rx->agc);
+  SetRXAAGCSlope(id, rx->agc_slope);
+  SetRXAAGCTop(id, rx->agc_gain);
+  switch (rx->agc) {
+  case AGC_OFF:
+    break;
+  case AGC_LONG:
+    SetRXAAGCAttack(id, 2);
+    SetRXAAGCHang(id, 2000);
+    SetRXAAGCDecay(id, 2000);
+    SetRXAAGCHangThreshold(id, (int) rx->agc_hang_threshold);
+    break;
+  case AGC_SLOW:
+    SetRXAAGCAttack(id, 2);
+    SetRXAAGCHang(id, 1000);
+    SetRXAAGCDecay(id, 500);
+    SetRXAAGCHangThreshold(id, (int) rx->agc_hang_threshold);
+    break;
+  case AGC_MEDIUM:
+    SetRXAAGCAttack(id, 2);
+    SetRXAAGCHang(id, 0);
+    SetRXAAGCDecay(id, 250);
+    SetRXAAGCHangThreshold(id, 100);
+    break;
+  case AGC_FAST:
+    SetRXAAGCAttack(id, 2);
+    SetRXAAGCHang(id, 0);
+    SetRXAAGCDecay(id, 50);
+    SetRXAAGCHangThreshold(id, 100);
+    break;
+  }
+  //
+  // Recalculate the "panadapter" AGC line positions.
+  //
+  GetRXAAGCHangLevel(id, &rx->agc_hang);
+  GetRXAAGCThresh(id, &rx->agc_thresh, 4096.0, (double) rx->sample_rate);
+  //
+  // Update mode settings, if this is RX1
+  //
+  if (id == 0) {
+    int mode = vfo[id].mode;
+    mode_settings[mode].agc = rx->agc;
+    copy_mode_settings(mode);
+  }
+}
+
+void rx_set_average(const RECEIVER *rx) {
+  //
+  // avgmode refers to the _display_enum, while
+  // wdspmode reflects the internal encoding in WDSP
+  //
+  int wdspmode;
+  double t = 0.001 * rx->display_average_time;
+  double display_avb = exp(-1.0 / ((double) rx->fps * t));
+  int display_average = max(2, (int) fmin(60, (double) rx->fps * t));
+  SetDisplayAvBackmult(rx->id, 0, display_avb);
+  SetDisplayNumAverage(rx->id, 0, display_average);
+  switch (rx->display_average_mode) {
+  case AVG_NONE:
+    wdspmode = AVERAGE_MODE_NONE;
+    break;
+  case AVG_RECURSIVE:
+    wdspmode = AVERAGE_MODE_RECURSIVE;
+    break;
+  case AVG_LOGRECURSIVE:
+  default:
+    wdspmode = AVERAGE_MODE_LOG_RECURSIVE;
+    break;
+  case AVG_TIMEWINDOW:
+    wdspmode = AVERAGE_MODE_TIME_WINDOW;
+    break;
+  }
+  //
+  // I observed artifacts when changing the mode from "Log Recursive"
+  // to "Time Window", so I generally switch to NONE first, and then
+  // to the target averaging mode
+  //
+  SetDisplayAverageMode(rx->id, 0, AVERAGE_MODE_NONE);
+  usleep(50000);
+  SetDisplayAverageMode(rx->id, 0, wdspmode);
+}
+
+void rx_set_bandpass(const RECEIVER *rx) {
+  RXASetPassband(rx->id, (double) rx->filter_low, (double) rx->filter_high);
+}
+
+void rx_set_cw_peak(const RECEIVER *rx, int state, double freq) {
+  double w = 0.25 * (rx->filter_high - rx->filter_low);
+  int filter_selection;
+  if (w < 0.0) { w = -w; }      // This happens with CWL
+  if (w < 25.0) { w = 25.0; }   // Do not go below 25 Hz to avoid ringing
+  SetRXASPCWFreq(rx->id, freq);
+  SetRXASPCWBandwidth(rx->id, w);
+  // SetRXASPCWGain(rx->id, 1.50);
+  SetRXASPCWGain(rx->id, 1.00);
+  SetRXASPCWRun(rx->id, state);
+  if (rx->use_cw_dp_filter) {
+    // new since WDSP 1.29: a double pole CW filter
+    filter_selection = 0;
+  } else {
+    // use BiQuad CW filter (which should be the default CW filter -> look into WDSP documentation)
+    filter_selection = 3;
+  }
+  /*
+    WDSP APF selections 1 (Matched) and 2 (Gaussian) crash reproducibly
+    in deskHPSDR RX processing. Only selection 0 (Double-pole) and
+    selection 3 (Bi-quad) are allowed here.
+  */
+  if (filter_selection == 1 || filter_selection == 2) {
+    filter_selection = 3; // prevent for using Matched or Gaussian filter type
+  }
+  SetRXASPCWSelection(rx->id, filter_selection);
+  t_print("%s: rx->use_cw_dp_filter = %d state = %d\n", __func__, rx->use_cw_dp_filter, state);
+}
+
+void rx_set_detector(const RECEIVER *rx) {
+  //
+  // Apply display detector mode stored in rx
+  //
+  int wdspmode;
+  switch (rx->display_detector_mode) {
+  case DET_PEAK:
+    wdspmode = DETECTOR_MODE_PEAK;
+    break;
+  case DET_AVERAGE:
+  default:
+    wdspmode = DETECTOR_MODE_AVERAGE;
+    break;
+  case DET_ROSENFELL:
+    wdspmode = DETECTOR_MODE_ROSENFELL;
+    break;
+  case DET_SAMPLEHOLD:
+    wdspmode = DETECTOR_MODE_SAMPLE;
+    break;
+  }
+  SetDisplayDetectorMode(rx->id, 0, wdspmode);
+}
+
+void rx_set_deviation(const RECEIVER *rx) {
+  SetRXAFMDeviation(rx->id, (double) rx->deviation);
+}
+
+void rx_set_equalizer(RECEIVER *rx) {
+  //
+  // Apply the equalizer parameters stored in rx
+  //
+  SetRXAEQProfile(rx->id, 12, rx->eq_freq, rx->eq_gain);
+  SetRXAEQRun(rx->id, rx->eq_enable);
+}
+
+void rx_set_fft_latency(const RECEIVER *rx) {
+  RXASetMP(rx->id, rx->low_latency);
+}
+
+void rx_set_fft_size(const RECEIVER *rx) {
+  RXASetNC(rx->id, rx->fft_size);
+}
+
+void rx_set_mode(RECEIVER *rx) {
+  //
+  // Change the  mode of a running receiver according to what it stored
+  // in its controlling VFO.
+  //
+  int vfo_id = rx_diversity_effective_vfo_id(rx);
+  SetRXAMode(rx->id, vfo[vfo_id].mode);
+  rx_set_squelch(rx);
+  if (rx_diversity_rx_active() && rx->id == 1) {
+    rx_set_offset(rx, vfo[vfo_id].offset - rx_get_mode_dc_offset(vfo_id) + rx_get_digi_monitor_offset(vfo_id));
+    if (protocol == NEW_PROTOCOL) {
+      schedule_high_priority();
+    }
+    return;
+  }
+  rx_frequency_changed(rx);
+}
+
+int rx_anf_allowed(const RECEIVER *rx) {
+  int mode;
+  if (rx == NULL) {
+    return 0;
+  }
+  int vfo_id = rx_diversity_effective_vfo_id(rx);
+  mode = vfo[vfo_id].mode;
+  return (mode != modeCWU && mode != modeCWL && mode != modeDIGU && mode != modeDIGL);
+}
+
+void rx_set_anf(const RECEIVER *rx) {
+  if (rx == NULL) {
+    return;
+  }
+  SetRXAANFRun(rx->id, rx_anf_allowed(rx) ? rx->anf : 0);
+  SetRXAANFPosition(rx->id, rx->nr_agc);
+}
+
+void rx_set_noise(const RECEIVER *rx) {
+  //
+  // Set/Update all parameters stored  in rx
+  // that areassociated with the "QRM fighters"
+  //
+  int mode = vfo[rx->id].mode;
+  int nr_allowed = (mode != modeDIGL && mode != modeDIGU);
+  //
+  // a) NB
+  //
+  SetEXTANBTau(rx->id, rx->nb_tau);
+  SetEXTANBHangtime(rx->id, rx->nb_hang);
+  SetEXTANBAdvtime(rx->id, rx->nb_advtime);
+  SetEXTANBThreshold(rx->id, rx->nb_thresh);
+  SetEXTANBRun(rx->id, (rx->nb == 1));
+  //
+  // b) NB2
+  //
+  SetEXTNOBMode(rx->id, rx->nb2_mode);
+  SetEXTNOBTau(rx->id, rx->nb_tau);
+  SetEXTNOBHangtime(rx->id, rx->nb_hang);
+  SetEXTNOBAdvtime(rx->id, rx->nb_advtime);
+  SetEXTNOBThreshold(rx->id, rx->nb_thresh);
+  SetEXTNOBRun(rx->id, (rx->nb == 2));
+  //
+  // Disable all noise-reduction engines before updating their parameters.
+  // This avoids transient overlap when switching between NR types.
+  //
+  SetRXAANRRun(rx->id, 0);
+  SetRXAEMNRRun(rx->id, 0);
+  SetRXARNNRRun(rx->id, 0);
+  SetRXASBNRRun(rx->id, 0);
+  //
+  // c) NR
+  //
+  SetRXAANRVals(rx->id, 64, 16, 16e-4, 10e-7);
+  SetRXAANRPosition(rx->id, rx->nr_agc);
+  //
+  // d) NR2
+  //
+  SetRXAEMNRPosition(rx->id, rx->nr_agc);
+  SetRXAEMNRgainMethod(rx->id, rx->nr2_gain_method);
+  SetRXAEMNRnpeMethod(rx->id, rx->nr2_npe_method);
+  SetRXAEMNRtrainZetaThresh(rx->id, rx->nr2_trained_threshold);
+  SetRXAEMNRtrainT2(rx->id, rx->nr2_trained_t2);
+  SetRXAEMNRpost2Taper(rx->id, rx->nr2_post_taper);
+  SetRXAEMNRpost2Nlevel(rx->id, (double) rx->nr2_post_nlevel);
+  SetRXAEMNRpost2Factor(rx->id, (double) rx->nr2_post_factor);
+  SetRXAEMNRpost2Rate(rx->id, (double) rx->nr2_post_rate);
+  SetRXAEMNRpost2Run(rx->id, rx->nr2_post);
+  SetRXAEMNRaeRun(rx->id, rx->nr2_ae);  // ArtifactElminiation ON
+  //
+  // e) ANF
+  //
+  rx_set_anf(rx);
+  //
+  // f) SNB
+  //
+  SetRXASNBARun(rx->id, nr_allowed && rx->snb);
+  //
+  // These WDSP functions only exist in a special, non-official version
+  //
+  // g) NR3
+  //
+  // NR3 has no additional parameters here.
+  //
+  // h) NR4
+  //
+  SetRXASBNRreductionAmount(rx->id,     rx->nr4_reduction_amount);
+  SetRXASBNRsmoothingFactor(rx->id,     rx->nr4_smoothing_factor);
+  SetRXASBNRwhiteningFactor(rx->id,     rx->nr4_whitening_factor);
+  SetRXASBNRnoiseRescale(rx->id,        rx->nr4_noise_rescale);
+  SetRXASBNRpostFilterThreshold(rx->id, rx->nr4_post_filter_threshold);
+  //
+  // Enable exactly the selected noise-reduction engine.
+  //
+  if (nr_allowed) {
+    switch (rx->nr) {
+    case 1:
+      SetRXAANRRun(rx->id, 1);
+      break;
+    case 2:
+      SetRXAEMNRRun(rx->id, 1);
+      break;
+    case 3:
+      SetRXARNNRRun(rx->id, 1);
+      break;
+    case 4:
+      SetRXASBNRRun(rx->id, 1);
+      break;
+    default:
+      break;
+    }
+  }
+}
+
+void rx_set_offset(const RECEIVER *rx, long long offset) {
+  if (offset == 0) {
+    SetRXAShiftFreq(rx->id, (double) offset);
+    RXANBPSetShiftFrequency(rx->id, (double) offset);
+    SetRXAShiftRun(rx->id, 0);
+  } else {
+    SetRXAShiftFreq(rx->id, (double) offset);
+    RXANBPSetShiftFrequency(rx->id, (double) offset);
+    SetRXAShiftRun(rx->id, 1);
+  }
+}
+
+void rx_set_notch(const RECEIVER *rx) {
+  long long tunefreq;
+  int mode;
+  int notch_valid = 0;
+  double shift = 0.0;
+  double minwidth = 0.0;
+  double width;
+  int nnotches = 0;
+  int rc;
+  if (rx == NULL) {
+    return;
+  }
+  int vfo_id = rx_diversity_effective_vfo_id(rx);
+  tunefreq = vfo[vfo_id].frequency;
+  mode = vfo[vfo_id].mode;
+  width = rx->mnf_fbw;
+  if (mode == modeCWU) {
+    shift = - (double) cw_keyer_sidetone_frequency;
+  } else if (mode == modeCWL) {
+    shift = (double) cw_keyer_sidetone_frequency;
+  }
+  RXANBPSetTuneFrequency(rx->id, (double) tunefreq);
+  RXANBPSetShiftFrequency(rx->id, shift);
+  RXANBPSetAutoIncrease(rx->id, 1);
+  RXANBPGetMinNotchWidth(rx->id, &minwidth);
+  if (!isfinite(minwidth) || minwidth <= 0.0) {
+    minwidth = 10.0;
+  }
+  if (!isfinite(width) || width <= 0.0) {
+    width = minwidth;
+  }
+  if (width < minwidth) {
+    width = minwidth;
+  }
+  if (width > 15000.0) {
+    width = 15000.0;
+  }
+  /* komplette Notchliste löschen */
+  RXANBPGetNumNotches(rx->id, &nnotches);
+  while (nnotches > 0) {
+    rc = RXANBPDeleteNotch(rx->id, nnotches - 1);
+    if (rc != 0) {
+      t_print("%s: RXANBPDeleteNotch failed index=%d rc=%d\n",
+              __func__, nnotches - 1, rc);
+      RXANBPSetNotchesRun(rx->id, 0);
+      return;
+    }
+    nnotches--;
+  }
+  /* neuen Notch anlegen (wenn Frequenz gesetzt) */
+  if (isfinite(rx->mnf_cfreq) && rx->mnf_cfreq > 0.0 && width > 0.0) {
+    rc = RXANBPAddNotch(rx->id, 0, rx->mnf_cfreq, width, 1);
+    if (rc != 0) {
+      t_print("%s: RXANBPAddNotch failed\n", __func__);
+      RXANBPSetNotchesRun(rx->id, 0);
+      return;
+    }
+    notch_valid = 1;
+  }
+  /* Filter global aktivieren/deaktivieren */
+  RXANBPSetNotchesRun(rx->id, (rx->mnf && notch_valid) ? 1 : 0);
+  t_print("%s: notch center frequency: %.6f MHz, notch bandwidth: %.1f Hz, enabled=%d\n",
+          __func__,
+          isfinite(rx->mnf_cfreq) ? rx->mnf_cfreq / 1e6 : 0.0,
+          width,
+          (rx->mnf && notch_valid) ? 1 : 0);
+}
+
+void rx_set_squelch(const RECEIVER *rx) {
+  //
+  // This applies the squelch mode stored in rx
+  //
+  double value;
+  int    fm_squelch = 0;
+  int    am_squelch = 0;
+  int    voice_squelch = 0;
+  //
+  // the "slider" value goes from 0 (no squelch) to 100 (fully engaged)
+  // and has to be mapped to
+  //
+  // AM    squelch:   -160.0 ... 0.00 dBm  linear interpolation
+  // FM    squelch:      1.0 ... 0.01      expon. interpolation
+  // Voice squelch:      0.0 ... 0.75      linear interpolation
+  //
+  int vfo_id = rx_diversity_effective_vfo_id(rx);
+  switch (vfo[vfo_id].mode) {
+  case modeAM:
+  case modeSAM:
+  // My personal experience is that "Voice squelch" is of very
+  // little use  when doing CW (this may apply to "AM squelch", too).
+  case modeCWU:
+  case modeCWL:
+    //
+    // Use AM squelch
+    //
+    value = ((rx->squelch / 100.0) * 160.0) - 160.0;
+    SetRXAAMSQThreshold(rx->id, value);
+    am_squelch = rx->squelch_enable;
+    break;
+  case modeLSB:
+  case modeUSB:
+  case modeDSB:
+    //
+    // Use Voice squelch (new in WDSP 1.21)
+    //
+    value = 0.0075 * rx->squelch;
+    voice_squelch = rx->squelch_enable;
+    SetRXASSQLThreshold(rx->id, value);
+    SetRXASSQLTauMute(rx->id, 0.1);
+    SetRXASSQLTauUnMute(rx->id, 0.1);
+    break;
+  case modeFMN:
+    //
+    // Use FM squelch
+    //
+    value = pow(10.0, -2.0 * rx->squelch / 100.0);
+    SetRXAFMSQThreshold(rx->id, value);
+    fm_squelch = rx->squelch_enable;
+    break;
+  default:
+    // no squelch for digital and other modes
+    // (this can be discussed).
+    break;
+  }
+  //
+  // activate the desired squelch, and deactivate
+  // all others
+  //
+  SetRXAAMSQRun(rx->id, am_squelch);
+  SetRXAFMSQRun(rx->id, fm_squelch);
+  SetRXASSQLRun(rx->id, voice_squelch);
+}
+

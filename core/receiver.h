@@ -1,0 +1,400 @@
+/* Copyright (C)
+* 2017 - John Melton, G0ORX/N6LYT
+* 2024,2025 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This source code has been forked and was adapted from piHPSDR by DL1YCF to deskHPSDR in October 2024
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+#ifndef _RECEIVER_H
+#define _RECEIVER_H
+
+#include <gtk/gtk.h>
+#include <time.h>
+#include <stdatomic.h>
+#ifdef ALSA
+  #include <alsa/asoundlib.h>
+#endif
+#ifdef PULSEAUDIO
+  #include <pulse/pulseaudio.h>
+  #include <pulse/simple.h>
+#endif
+
+enum _audio_channel_enum {
+  STEREO = 0,
+  LEFT,
+  RIGHT
+};
+
+#define RX_CW_ZERO_BEAT_MIN_HZ 300
+#define RX_CW_ZERO_BEAT_MAX_HZ 1000
+#define RX_CW_ZERO_BEAT_STEP_HZ 5
+#define RX_CW_ZERO_BEAT_BINS (((RX_CW_ZERO_BEAT_MAX_HZ - RX_CW_ZERO_BEAT_MIN_HZ) / RX_CW_ZERO_BEAT_STEP_HZ) + 1)
+
+typedef struct _receiver {
+  int id;
+  GMutex mutex;
+  GMutex display_mutex;
+
+  int adc;
+
+  double volume;  // in dB
+  double tci_rxaudio_scale;
+
+  int dsp_size;
+  int buffer_size;
+  int fft_size;
+  int low_latency;
+
+  int agc;
+  double agc_gain;
+  double agc_slope;
+  double agc_hang_threshold;
+  double agc_hang;
+  double agc_thresh;
+  int fps;
+  int displaying;
+  int audio_channel; // STEREO or LEFT or RIGHT
+  int sample_rate;
+  int pixels;
+  int samples;
+  int output_samples;
+  double *iq_input_buffer;
+  double *audio_output_buffer;
+  int audio_index;
+  float *pixel_samples;
+  int display_panadapter;
+  int display_waterfall;
+  guint update_timer_id;
+  int    smetermode;
+  double meter;
+
+  double hz_per_pixel;
+
+  int image_measure;
+  double image_measure_hz;
+  int image_measure_valid;
+  double image_signal_db;
+  double image_mirror_db;
+  double image_rejection_db;
+  double rx_iq_gain;
+  double rx_iq_phase;
+  char rx_iq_status[64];
+
+  int digi_offset_u;
+  int digi_offset_l;
+
+  int dither;
+  int random;
+  int preamp;
+
+  //
+  // Encodings for "QRM fighters"
+  //
+  // nr = 0:         No noise reduction
+  // nr = 1:         Variable-Leak LMS Algorithm, "NR", "ANR"
+  // nr = 2:         Spectral Noise Reduction, "NR2", "AEMNR"
+  // nr = 3:         non-standard extension to WDSP
+  // nr = 4:         non-standard extension to WDSP
+  //
+  // nb = 0:         No noise blanker
+  // nb = 1:         Preemptive Wideband Blanker, "NB", "ANB"
+  // nb = 2:         Interpolating Wideband Blanker, "NB2", "NOB"
+  //
+  // anf= 0/1:       Automatic notch filter off/on
+  // snb= 0/1:       Spectral noise blanker off/on
+  //
+  int nb;
+  int nr;
+  int anf;
+  int snb;
+  int mnf;
+  double mnf_cfreq;
+  double mnf_fbw;
+
+  //
+  // NR/NR2/ANF: position
+  // 0: execute NR/NR2/ANF before AGC
+  // 1: execute NR/NR2/ANF after AGC
+  //
+  int nr_agc;
+
+  //
+  // Noise reduction parameters for "NR2"
+  // To be modified in the DSP menu.
+  //
+  //  Gain method: 0=GaussianSpeechLin, 1=GaussianSpeechLog, 2=GammaSpeech
+  //  NPE  method: 0=OSMS, 1=MMSE
+  //  AE         : Artifact elimination filter on(1)/off(0)
+  //
+  int nr2_gain_method;
+  int nr2_npe_method;
+  int nr2_ae;
+  int nr2_post; // post-NR2 corrections on/off
+  int nr2_post_nlevel;
+  int nr2_post_factor;
+  int nr2_post_rate;
+  int nr2_post_taper;
+  double nr2_trained_threshold;
+  double nr2_trained_t2;
+
+  //
+  // Noise blanker parameters. These parameters have
+  // similar meanings for NB/NB2 so we only take one set.
+  // To be modified in the DSP menu. Note the "times"
+  // are stored internally in seconds, while in the DSP menu they
+  // are specified in milli-seconds.
+  // The "NB value" nb_thresh, as obtained from the DSP menu,
+  // is multiplied with 0.165 merely since this is done in other
+  // SDR programs as well.
+  // The comments indicate the names of the parameters in the Thetis menu
+  // as well as the internal name used in Thetis.
+  //
+  double nb_tau;       // "Slew",                         NBTransision
+  double nb_advtime;   // "Lead",                         NBLead
+  double nb_hang;      // "Lag",                          NBLag
+  double nb_thresh;    // "Threshold",                    NBThreshold
+  int    nb2_mode;     // NB mode, only NB2
+  //
+  // nb2_mode = 0:  zero mode
+  // nb2_mode = 1:  sample-hold
+  // nb2_mode = 2:  mean-hold
+  // nb2_mode = 3:  hold-sample
+  // nb2_mode = 4:  interpolate
+
+  //
+  // NR4 parameters
+  //
+  double nr4_reduction_amount;
+  double nr4_smoothing_factor;
+  double nr4_whitening_factor;
+  double nr4_noise_rescale;
+  double nr4_post_filter_threshold;
+
+  int alex_antenna;
+  int alex_attenuation;
+
+  int filter_low;
+  int filter_high;
+  int use_cw_dp_filter;
+
+  double rx_cw_zero_beat_calibration_hz;
+  int cw_zero_beat_active;
+  int cw_zero_beat_count;
+  int cw_zero_beat_target_count;
+  double cw_zero_beat_coeff[RX_CW_ZERO_BEAT_BINS];
+  double cw_zero_beat_q1[RX_CW_ZERO_BEAT_BINS];
+  double cw_zero_beat_q2[RX_CW_ZERO_BEAT_BINS];
+
+  int width;
+  int height;
+
+  GtkWidget *panel;
+  GtkWidget *panadapter;
+  GtkWidget *waterfall;
+
+  int panadapter_low;
+  int panadapter_high;
+  int panadapter_step;
+  int panadapter_peaks_on;
+  int panadapter_num_peaks;
+  int panadapter_ignore_range_divider;
+  int panadapter_ignore_noise_percentile;
+  int panadapter_hide_noise_filled;
+  int panadapter_peaks_in_passband_filled;
+  int panadapter_peaks_as_smeter;
+  int panadapter_ovf_on;
+  int panadapter_autoscale_enabled;
+  int pan_peak_preserve;
+  int pan_window_type;
+  int pan_fft_size;   /* 0 = Auto, otherwise fixed FFT size */
+
+
+  int waterfall_low;
+  int waterfall_high;
+  int waterfall_automatic;
+  int panadapter_noise_margin;
+
+  int panadapter_noise_level;
+  double panadapter_smoothed_noise_floor;
+  int panadapter_smoothed_noise_floor_valid;
+  time_t panadapter_last_noisefloor_calc_time;
+  gint64 panadapter_last_noisefloor_measure_us;
+  int panadapter_noisefloor_first_run;
+  int panadapter_noisefloor_fast_start_count;
+
+  cairo_surface_t *panadapter_surface;
+  GdkPixbuf *pixbuf;
+  int local_audio;
+  int mute_when_not_active;
+  int audio_device;
+  int local_audio_mute;
+  gchar audio_name[512];
+#ifdef PULSEAUDIO
+  int pulseaudio_buffer_size;  /* 0 = AUTO, otherwise requested quantum in frames */
+#endif
+
+#if defined(COREAUDIO) && defined(PULSEAUDIO) && defined(ALSA)
+  // this is only possible for "cppcheck" runs
+  // declare all data without conflicts
+  void *playstream;
+  int local_audio_buffer_inpt;
+  int local_audio_buffer_outpt;
+  int local_audio_buffer_offset;
+  int local_audio_cw_active;
+  int local_audio_channels;
+  void *local_audio_buffer;
+  snd_pcm_t *playback_handle;
+  snd_pcm_format_t local_audio_format;
+#endif
+#if defined(COREAUDIO) && !defined(PULSEAUDIO) && !defined(ALSA)
+  void *coreaudio_output_handle;
+  atomic_int local_audio_buffer_inpt;      // producer pointer in RX audio ring-buffer
+  atomic_int local_audio_buffer_outpt;     // consumer pointer in RX audio ring-buffer
+  atomic_int sidetone_buffer_inpt;         // producer pointer in sidetone ring-buffer
+  atomic_int sidetone_buffer_outpt;        // consumer pointer in sidetone ring-buffer
+  int local_audio_channels;
+  int local_audio_cw_active;
+  float *local_audio_buffer;
+  float *sidetone_buffer;
+#endif
+#if !defined(COREAUDIO) && !defined(PULSEAUDIO) && defined(ALSA)
+  snd_pcm_t *playback_handle;
+  snd_pcm_format_t local_audio_format;
+  void *local_audio_buffer;        // different formats possible, so void*
+  int local_audio_buffer_offset;
+  int local_audio_cw_active;
+  int local_audio_channels;
+#endif
+#if !defined(COREAUDIO) && defined(PULSEAUDIO) && !defined(ALSA)
+  pa_simple *playstream;
+  float *local_audio_buffer;
+  int local_audio_buffer_offset;
+  int local_audio_cw_active;
+  int local_audio_channels;
+#endif
+
+  GMutex local_audio_mutex;
+
+  int squelch_enable;
+  double squelch;
+
+  int binaural;
+
+  int deviation;
+
+  long long waterfall_frequency;
+  int waterfall_sample_rate;
+  int waterfall_pan;
+  int waterfall_zoom;
+
+  int mute_radio;
+#ifdef __APPLE__
+  int wheel_present;
+#endif
+
+  double *buffer;
+  void *resampler;
+  double *resample_buffer;
+  int resample_buffer_size;
+
+  int zoom;
+  int pan;
+
+  int x;
+  int y;
+
+  // two variables that implement the new
+  // "mute first RX IQ samples after TX/RX transition"
+  // feature that is relevant for HermesLite-II and STEMlab
+  // (and possibly some other radios)
+  //
+  int txrxcount;
+  int txrxmax;
+
+  int display_gradient;
+  int display_filled;
+  int display_detector_mode;
+  int display_average_mode;
+  double display_average_time;
+
+  //
+  // Equalizer data
+  //
+  int  eq_enable;
+  double eq_freq[13];
+  double eq_gain[13];
+} RECEIVER;
+
+extern RECEIVER *rx_create_pure_signal_receiver (int id, int sample_rate, int pixels, int fps);
+extern RECEIVER *rx_create_receiver (int id, int pixels, int width, int height);
+
+extern gboolean rx_button_press_event (GtkWidget *widget, GdkEventButton *event, gpointer data);
+extern gboolean rx_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data);
+extern gboolean rx_motion_notify_event (GtkWidget *widget, GdkEventMotion *event, gpointer data);
+extern gboolean rx_scroll_event (GtkWidget *widget, const GdkEventScroll *event, gpointer data);
+
+extern void   rx_add_iq_samples (RECEIVER *rx, double i_sample, double q_sample);
+extern void   rx_add_div_iq_samples (RECEIVER *rx, double i0, double q0, double i1, double q1);
+
+extern void   rx_change_sample_rate (RECEIVER *rx, int sample_rate);
+extern void   rx_change_adc (const RECEIVER *rx);
+extern void   rx_close (const RECEIVER *rx);
+extern void   rx_create_analyzer (const RECEIVER *rx);
+extern void   rx_filter_changed (RECEIVER *rx);
+extern int    rx_get_pixels (RECEIVER *rx);
+extern double rx_get_smeter (const RECEIVER *rx);
+extern long long rx_get_mode_dc_offset (int id);
+extern long long rx_get_digi_monitor_offset (int id);
+extern void   rx_frequency_changed (RECEIVER *rx);
+extern void   rx_mode_changed (RECEIVER *rx);
+extern void   rx_off (const RECEIVER *rx);
+extern void   rx_on (const RECEIVER *rx);
+extern void   rx_reconfigure (RECEIVER *rx, int height);
+extern void   rx_restore_state (RECEIVER *rx);
+extern void   rx_save_state (const RECEIVER *rx);
+
+extern void   rx_set_active (RECEIVER *rx);
+extern int    rx_binaural_allowed (const RECEIVER *rx);
+extern void   rx_set_af_binaural (const RECEIVER *rx);
+extern void   rx_audio_output_opened (RECEIVER *rx);
+extern void   rx_set_af_gain (const RECEIVER *rx);
+extern void   rx_set_agc (RECEIVER *rx);
+extern void   rx_set_analyzer (const RECEIVER *rx);
+extern void   rx_set_average (const RECEIVER *rx);
+extern void   rx_set_bandpass (const RECEIVER *rx);
+extern void   rx_set_cw_peak (const RECEIVER *rx, int state, double freq);
+extern void   rx_cw_zero_beat_start (RECEIVER *rx);
+extern void   rx_set_detector (const RECEIVER *rx);
+extern void   rx_set_deviation (const RECEIVER *rx);
+extern void   rx_set_displaying (RECEIVER *rx);
+extern void   rx_set_equalizer (RECEIVER *rx);
+extern void   rx_set_fft_latency (const RECEIVER *rx);
+extern void   rx_set_fft_size (const RECEIVER *rx);
+extern void   rx_set_filter (RECEIVER *rx);
+extern void   rx_set_framerate (RECEIVER *rx);
+extern void   rx_set_frequency (RECEIVER *rx, long long frequency);
+extern void   rx_set_mode (RECEIVER* rx);
+extern int    rx_anf_allowed (const RECEIVER *rx);
+extern void   rx_set_noise (const RECEIVER *rx);
+extern void   rx_set_anf (const RECEIVER *rx);
+extern void   rx_set_notch (const RECEIVER *rx);
+extern void   rx_set_offset (const RECEIVER *rx, long long offset);
+extern void   rx_set_squelch (const RECEIVER *rx);
+
+extern void   rx_vfo_changed (RECEIVER *rx);
+extern void   rx_update_zoom (RECEIVER *rx);
+
+#endif

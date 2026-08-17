@@ -1,0 +1,72 @@
+/* Copyright (C)
+* 2016 - John Melton, G0ORX/N6LYT
+* 2024,2025 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This source code has been forked and was adapted from piHPSDR by DL1YCF to deskHPSDR in October 2024
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+#ifndef _AUDIO_H
+#define _AUDIO_H
+
+#include "receiver.h"
+
+#define MAX_AUDIO_DEVICES 64
+
+typedef struct _audio_devices {
+  char *name;
+  int index;
+  char *description;
+} AUDIO_DEVICE;
+
+extern int n_input_devices;
+extern AUDIO_DEVICE input_devices[MAX_AUDIO_DEVICES];
+extern int n_output_devices;
+extern AUDIO_DEVICE output_devices[MAX_AUDIO_DEVICES];
+extern GMutex audio_mutex;
+
+extern int audio_open_input (void);
+extern void audio_close_input (void);
+extern int audio_open_output (RECEIVER *rx);
+extern void audio_close_output (RECEIVER *rx);
+extern int audio_write (RECEIVER *rx, float left_sample, float right_sample);
+extern int cw_audio_write (RECEIVER *rx, float sample);
+extern void audio_release_cards (void);
+extern void audio_get_cards (void);
+extern guint64 audio_get_xrun_count (void);
+typedef struct {
+  int available;
+  int queued;
+  int capacity;
+  int low;
+  int target;
+  int high;
+} AUDIO_BUFFER_DIAG;
+
+extern int audio_get_rx_buffer_diag(RECEIVER *rx, AUDIO_BUFFER_DIAG *diag);
+extern int audio_get_mic_buffer_diag(AUDIO_BUFFER_DIAG *diag);
+extern int audio_get_cw_buffer_diag(RECEIVER *rx, AUDIO_BUFFER_DIAG *diag);
+
+#ifdef COREAUDIO
+  extern void audio_render_local_output(RECEIVER *rx, float *out, unsigned int frames, int channels);
+  extern void audio_process_local_mic_input(const float *samples, unsigned int frames);
+  extern void audio_reset_mic_buffer(void);
+  extern void audio_reprime_output(RECEIVER *rx);
+  extern int audio_open_tci_monitor (const char *audio_name);
+  extern void audio_close_tci_monitor (void);
+#endif
+float  audio_get_next_mic_sample (void);
+#endif

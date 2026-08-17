@@ -1,0 +1,473 @@
+/* Copyright (C)
+* 2015 - John Melton, G0ORX/N6LYT
+* 2024,2025 - Heiko Amft, DL1BZ (Project deskHPSDR)
+*
+*   This source code has been forked and was adapted from piHPSDR by DL1YCF to deskHPSDR in October 2024
+*
+*   This program is free software: you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License as published by
+*   the Free Software Foundation, either version 3 of the License, or
+*   (at your option) any later version.
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*
+*/
+
+#ifndef _RADIO_H
+#define _RADIO_H
+
+#include <stdatomic.h>
+#include <math.h>
+#include "adc.h"
+#include "dac.h"
+#include "discovered.h"
+#include "receiver.h"
+#include "transmitter.h"
+
+enum _pa_power_enum {
+  PA_1W = 0,
+  PA_5W,
+  PA_10W,
+  PA_15W,
+  PA_20W,
+  PA_25W,
+  PA_30W,
+  PA_50W,
+  PA_100W,
+  PA_200W,
+  PA_500W,
+  PA_1KW
+};
+
+//
+// BOOLEAN conversion macros
+//
+// SET    converts an int to a boolean (the result is 0 or 1)
+// NOT    converts an int to a boolean and inverts it
+// TOGGLE has an l-value as argument and inverts it,
+//        TOGGLE(a) is equivalent to a = NOT(a)
+
+#define SET(a) (a) ? 1 : 0
+#define NOT(a) (a) ? 0 : 1
+#define TOGGLE(a) a = (a) ? 0 : 1
+
+extern DISCOVERED *radio;
+extern gboolean radio_is_remote;
+
+extern GtkWidget *fixed;
+
+extern long long frequency_calibration;
+extern double ppm_factor;
+extern long long apply_ppm_ll(long long f_hz);
+
+enum _filter_board_enum {
+  NO_FILTER_BOARD = 0,
+  ALEX,
+  APOLLO,
+  CHARLY25,
+  N2ADR,
+  N2ADR_TX
+};
+
+enum _region_enum {
+  REGION_VFO = 0,  // VFO mode
+  REGION_UK,       // 60m band allocation for UK
+  REGION_US,       // 60m band allocation for US
+  REGION_WRC15,    // 60m band allocation for WRC15
+  REGION_CA        // 60m band allocation for CA
+};
+
+enum _capture_state {
+  CAP_INIT = 0,            // util first recording
+  CAP_RECORDING,           // audio is being recorded
+  CAP_RECORD_DONE,         // record buffer full
+  CAP_AVAIL,               // audio recording finished
+  CAP_XMIT,                // captured audio is being transmitted
+  CAP_XMIT_DONE,           // captured audio data transmission ended
+  CAP_REPLAY,              // captured audio is replayed locally
+  CAP_REPLAY_DONE,         // captured audio replay ended
+  CAP_GOTOSLEEP,           // hide capture state display
+  CAP_SLEEPING             // capture state is hidden
+};
+
+//
+// WDSP-independent constants used for display, detector and alc modes
+// We start at 100 so we can apply defaults is values are read from
+// "old" props files.
+//
+enum _display_enum {
+  SMETER_PEAK     = 100,
+  SMETER_AVERAGE,
+  ALC_PEAK,
+  ALC_AVERAGE,
+  ALC_GAIN,
+  DET_PEAK,
+  DET_AVERAGE,
+  DET_ROSENFELL,
+  DET_SAMPLEHOLD,
+  AVG_NONE,
+  AVG_RECURSIVE,
+  AVG_LOGRECURSIVE,
+  AVG_TIMEWINDOW
+};
+
+typedef enum {
+  HERMES_MODE_GENERIC = 0,
+  HERMES_MODE_ANAN10E = 1,
+  HERMES_MODE_BRICK   = 2
+} HERMES_MODE;
+
+extern int region;
+
+extern int RECEIVERS;
+extern int PS_TX_FEEDBACK;
+extern int PS_RX_FEEDBACK;
+
+extern RECEIVER *receiver[];
+extern RECEIVER *active_receiver;
+
+extern TRANSMITTER *transmitter;
+
+enum _cw_keyer_mode_enum {
+  KEYER_STRAIGHT = 0,
+  KEYER_MODE_A,
+  KEYER_MODE_B
+};
+
+enum _mic_input_xlr_enum {
+  MIC3P55MM = 0,
+  MICXLR
+};
+
+enum _sat_mode_enum {
+  SAT_NONE,
+  SAT_MODE,
+  RSAT_MODE
+};
+
+extern int backup_index;
+
+extern int rxgain_index_0;
+extern int rxgain_index_1;
+
+extern int sat_mode;
+
+extern int atlas_penelope;
+extern int atlas_clock_source_10mhz;
+extern int atlas_clock_source_128mhz;
+extern int atlas_config;
+extern int atlas_mic_source;
+extern int atlas_janus;
+
+extern int classE;
+
+extern int tx_out_of_band_allowed;
+
+extern int filter_board;
+extern int pa_enabled;
+extern int pa_power;
+extern int enable_hl2_atu_gateware;
+extern double pa_trim[11];
+extern const int pa_power_list[];
+
+extern int display_zoompan;
+extern int display_sliders;
+
+#ifdef __APPLE__
+  extern int rx_audio_network_reserve_enabled;
+  extern int rx_audio_network_reserve_ms;
+#endif
+extern int display_extra_sliders;
+extern int display_toolbar;
+extern double percent_pan_wf;
+extern int display_info_bar;
+extern int display_clock;
+extern int display_solardata;
+extern int display_ah4;
+extern int display_wmap;
+extern int pan_peak_hold_enabled;
+extern int pan_peak_hold_TX_enabled;
+extern int pan_peak_hold_mode;
+extern float pan_peak_hold_hold_sec;
+extern float pan_peak_hold_decay_db_per_sec;
+
+typedef struct {
+  double r, g, b, a;
+} cairo_rgba_t;
+
+extern cairo_rgba_t peak_line_col;
+extern cairo_rgba_t radio_bgcolor;
+extern cairo_rgba_t tx_pan_fill_col;
+extern cairo_rgba_t mwin_bgcolor;
+
+extern int max_pan_label_rows;
+extern int pan_spot_lifetime_min;
+extern int dx_spots_active_rx_only;
+
+extern int mic_linein;
+extern double linein_gain;
+extern int mic_boost;
+extern int mic_bias_enabled;
+extern int mic_ptt_enabled;
+extern int mic_ptt_tip_bias_ring;
+extern int mic_input_xlr;
+
+struct audio_profile {
+  int nr;
+  char desc[3][64];
+};
+
+extern struct audio_profile mic_prof;
+extern char own_callsign[16];
+extern char own_locator[15];
+extern char dxc_login[16];
+extern char dxc_address[32];
+extern long int dxc_port;
+extern int rbn_enabled;
+extern int rbn_filter_cw;
+extern int rbn_filter_rtty;
+extern int rbn_filter_cq;
+extern char rbn_address[64];
+extern long int rbn_port;
+extern int dxcwin_x;
+extern int dxcwin_y;
+extern int dxcwin_w;
+extern int dxcwin_h;
+extern int dxcwin_open;
+extern int atuwin_wv_w;
+extern int atuwin_wv_h;
+extern char atuwin_TITLE[32];
+extern char atuwin_URL[64];
+extern char atuwin_ACTION[9];
+extern int save_zoom_state;
+extern int autogain_enabled;
+extern int autogain_time_enabled;
+extern int block_cat_rx_if_tune;
+
+extern int receivers;
+
+extern ADC adc[2];
+extern DAC dac[2];
+
+extern int locked;
+int set_locked(int state);
+
+extern gboolean duplex;
+extern gboolean mute_rx_while_transmitting;
+extern int rx_height;
+
+extern int cw_keys_reversed;
+extern int cw_keyer_speed;
+extern int cw_keyer_mode;
+extern int cw_keyer_weight;
+extern int cw_keyer_spacing;
+extern int cw_keyer_internal;
+extern int cw_keyer_sidetone_volume;
+extern int cw_keyer_ptt_delay;
+extern int cw_keyer_hang_time;
+extern int cw_keyer_sidetone_frequency;
+extern int cw_breakin;
+extern int cw_ramp_width;
+
+extern int enable_auto_tune;
+extern int auto_tune_flag;
+extern int auto_tune_end;
+
+extern int enable_tx_inhibit;
+extern int TxInhibit;
+
+extern int vfo_encoder_divisor;
+
+extern int protocol;
+extern int device;
+extern int new_pa_board;
+extern int ozy_software_version;
+extern int mercury_software_version[2];
+extern int penelope_software_version;
+extern int ptt;
+extern _Atomic int mox;
+extern int pre_mox;
+extern _Atomic int tune;
+extern int memory_tune;
+extern int full_tune;
+
+extern int adc0_overload;
+extern int adc1_overload;
+extern int tx_fifo_underrun;
+extern int tx_fifo_overrun;
+extern int high_swr_seen;
+extern int sequence_errors;
+
+extern unsigned int exciter_power;
+extern unsigned int alex_forward_power;
+extern unsigned int alex_reverse_power;
+extern unsigned int ADC1;
+extern unsigned int ADC0;
+
+extern int split;
+extern int disable_split_on_band_change;
+
+extern int n2adr_hpf_enable;
+extern unsigned char OCtune;
+extern int OCfull_tune_time;
+extern int OCmemory_tune_time;
+extern long long tune_timeout;
+
+extern int analog_meter;
+
+extern int eer_pwm_min;
+extern int eer_pwm_max;
+
+extern int tx_filter_low;
+extern int tx_filter_high;
+
+extern int ctun;
+
+extern int vox_enabled;
+extern double vox_threshold;
+extern double vox_hang;
+extern _Atomic int vox;
+extern int CAT_cw_is_active;
+extern int MIDI_cw_is_active;
+extern int radio_ptt;
+extern int cw_key_hit;
+extern int n_adc;
+
+extern int diversity_enabled;
+extern int diversity_brick3_mode;
+extern double div_cos, div_sin;
+extern double div_gain, div_phase;
+
+extern int capture_state;
+extern enum ACTION capture_trigger_action;
+extern int capture_max;
+extern int capture_record_pointer;
+extern int capture_replay_pointer;
+extern double *capture_data;
+
+extern int can_transmit;
+
+extern int have_rx_gain;         // programmable RX gain available
+extern int have_rx_att;          // step attenuator available -31 ... 0 dB
+extern int have_preamp;          // switchable preamp
+extern int have_dither;          // Dither bit can be used
+extern int have_alex_att;        // ALEX board does have 0/10/20/30 dB attenuator
+extern int have_saturn_xdma;     // Saturn can use Network or XDMA interface
+extern int have_lime;            // The radio is a LIME-SDR
+extern int have_sdrplay;         // The radio is a SDRPlay
+extern int have_radioberry1;     // RadioBerry with first-generation  firmware
+extern int have_radioberry2;     // RadioBerry with second-generation firmware
+extern int have_radioberry3;     // RadioBerry with third-generation firmware (pio support)
+extern int rx_gain_calibration;  // used to calibrate the input signal
+
+extern double drive_max;         // maximum value of the drive slider
+extern double drive_digi_max;    // maximum value allowed in DIGU/DIGL
+
+extern gboolean display_warnings;
+extern gboolean display_pacurr;
+
+extern int hl2_audio_codec;
+extern int hl2_cl1_input;
+extern int anan10E;
+extern int hermes_mode;
+extern int tci_audio_monitor;
+extern int tci_iq_swap;
+extern int tci_iq_conjugate;
+extern int tci_cmd_uppercase; // send outgoing TCI command names in uppercase
+
+extern int adc0_filter_bypass;   // Bypass ADC0 filters on receive
+extern int adc1_filter_bypass;   // Bypass ADC1 filters on receiver  (ANAN-7000/8000/G2)
+extern int mute_spkr_amp;        // Mute audio amplifier in radio    (ANAN-7000, G2)
+
+extern int VFO_WIDTH;
+extern int VFO_HEIGHT;
+extern const int MIN_METER_WIDTH;
+extern int METER_WIDTH;
+extern int METER_HEIGHT;
+extern int MENU_WIDTH;
+extern int rx_stack_horizontal;
+extern int suppress_popup_sliders;
+extern const int tx_dialog_width;
+extern const int tx_dialog_height;
+
+extern char g_rx200_data[4][64];
+extern int rx200_udp_valid;
+extern int rx200_udp_port;
+extern char g_lpf_data[6][64];
+extern int lpf_udp_valid;
+extern int lpf_udp_port;
+
+extern int force_iob;
+extern int use_tx_audiochain;
+
+
+//
+// All global functions declared here start with "radio_",
+// exception: my_combo_attach()
+//
+extern void   radio_tune_update (int state);
+extern void   radio_mox_update (int state);
+extern void   radio_mox_update_immediate (int state);
+extern void   radio_save_state (void);
+extern void   radio_stop (void);
+extern void   radio_reconfigure (void);
+extern void   radio_reconfigure_screen (void);
+extern void   radio_start_radio (void);
+extern void   radio_change_receivers (int r);
+extern void   radio_change_sample_rate (int rate);
+extern void   radio_set_alex_antennas (void);
+extern void   radio_tx_vfo_changed (void);
+extern void   radio_split_toggle (void);
+extern void   radio_set_split (int v);
+extern void   radio_set_mox (int state);
+extern void   radio_set_mox_immediate (int state);
+extern int    radio_get_mox (void);
+extern void   radio_set_tune (int state);
+extern int    radio_get_tune (void);
+extern void   radio_set_vox (int state);
+extern double radio_get_drive (void);
+extern int    radio_get_drive_as_int (void);
+extern void   radio_set_drive (double value);
+extern void   radio_calc_drive_level (void);
+extern void   radio_calc_tune_drive_level (void);
+extern void   radio_set_rf_gain (const RECEIVER *rx);
+extern void   radio_set_attenuation (int value);
+extern void   radio_reset_all_alex_attenuation (void);
+extern void   radio_set_alex_attenuation (int v);
+extern int    radio_is_transmitting (void);
+extern void   radio_set_satmode (int mode);
+extern int    radio_max_band (void);
+extern void   radio_start_playback (void);
+extern void   radio_end_playback (void);
+extern void   radio_start_xmit_captured_data (void);
+extern void   radio_end_xmit_captured_data (void);
+extern void   radio_start_capture (void);
+extern void   radio_end_capture (void);
+extern void   radio_protocol_run (void);
+extern void   radio_protocol_stop (void);
+extern void   radio_protocol_restart (void);
+extern void   radio_start_auto_tune (void);
+extern void   reassign_pa_trim (void);
+extern int    index_rf_gain (void);
+extern int    index_if_gain (void);
+extern void   destroy_widget_safe (GtkWidget **pwidget);
+extern void   open_atu_window (GtkWindow *top_window,  const char *win_title, const char *win_url);
+
+extern int compare_doubles (const void *a, const void *b);
+
+extern int optimize_for_touchscreen;
+extern void my_combo_attach (GtkGrid *grid, GtkWidget *combo, int row, int col, int spanrow, int spancol);
+extern gboolean win_set_bgcolor (GtkWidget *widget, gpointer data);
+
+//
+// Macro for a memory barrier, preventing changing the execution order
+// or memory accesses (used for ring buffers)
+//
+#define MEMORY_BARRIER asm volatile ("" ::: "memory")
+#endif

@@ -20,7 +20,17 @@ include_directories(include core core/wdsp-2.00)
 set(SOURCES
     src/main.cpp
     src/mainwindow.cpp
-    # Core files will be added here
+    core/discovery.c
+    core/new_protocol.c
+    core/old_protocol.c
+    core/radio.c
+    core/receiver.c
+    core/transmitter.c
+    core/discovered.c
+    core/audio.c
+    core/vfo.c
+    core/band.c
+    # WDSP files will be added in next step
 )
 
 add_executable(Qhpsdr ${SOURCES})
