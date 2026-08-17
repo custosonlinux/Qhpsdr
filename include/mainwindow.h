@@ -5,7 +5,10 @@
 
 class OldProtocolConnection;
 class RxAudioChannel;
+class SpectrumAnalyzer;
 class VfoPanel;
+class PanadapterWidget;
+class WaterfallWidget;
 class QAction;
 class QAudioSink;
 class QIODevice;
@@ -26,10 +29,13 @@ private:
 
     OldProtocolConnection *m_connection = nullptr;
     RxAudioChannel *m_rxAudio = nullptr;
+    SpectrumAnalyzer *m_spectrum = nullptr;
     QAudioSink *m_audioSink = nullptr;
     QIODevice *m_audioDevice = nullptr;
     QAction *m_disconnectAction = nullptr;
     VfoPanel *m_vfoPanel = nullptr;
+    PanadapterWidget *m_panadapter = nullptr;
+    WaterfallWidget *m_waterfall = nullptr;
 };
 
 #endif // MAINWINDOW_H

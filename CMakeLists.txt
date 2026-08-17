@@ -53,6 +53,12 @@ set(SOURCES
     core/rxaudio.h
     src/vfopanel.cpp
     include/vfopanel.h
+    core/spectrumanalyzer.cpp
+    core/spectrumanalyzer.h
+    src/panadapterwidget.cpp
+    include/panadapterwidget.h
+    src/waterfallwidget.cpp
+    include/waterfallwidget.h
 )
 
 qt_add_executable(Qhpsdr ${SOURCES})

@@ -7,6 +7,7 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <QIntValidator>
+#include <QPalette>
 #include <QProgressBar>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -34,19 +35,64 @@ constexpr ModeEntry kModes[] = {
 
 } // namespace
 
+namespace {
+// Amber-on-black LCD look, styled after deskHPSDR's VFO "A:" frequency
+// readout (core/deskhpsdr-src/vfo.c's cairo-drawn LCD panel).
+const char *const kFreqEditStyle =
+    "QLineEdit {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 #e08a1e, stop:1 #b6690f);"
+    "  color: #14100a;"
+    "  border: 1px solid #6b4108;"
+    "  border-radius: 4px;"
+    "  padding: 2px 10px;"
+    "}"
+    "QLineEdit:disabled {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 #4a4741, stop:1 #38352f);"
+    "  color: #77716a;"
+    "  border-color: #29271f;"
+    "}";
+
+const char *const kDarkLabelStyle = "color: #7fb6c4;";
+const char *const kComboStyle =
+    "QComboBox {"
+    "  background: #1a222b;"
+    "  color: #d8e6ea;"
+    "  border: 1px solid #33424c;"
+    "  border-radius: 3px;"
+    "  padding: 2px 6px;"
+    "}"
+    "QComboBox:disabled { color: #5b6870; }"
+    "QComboBox QAbstractItemView {"
+    "  background: #1a222b;"
+    "  color: #d8e6ea;"
+    "  selection-background-color: #35526a;"
+    "}";
+} // namespace
+
 VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
+    setAutoFillBackground(true);
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, QColor(0x0a, 0x0e, 0x13));
+    setPalette(pal);
+
     m_freqEdit = new QLineEdit(this);
     m_freqEdit->setValidator(new QIntValidator(0, 999999999, m_freqEdit));
-    QFont freqFont = m_freqEdit->font();
-    freqFont.setPointSize(freqFont.pointSize() + 12);
+    QFont freqFont("monospace");
+    freqFont.setStyleHint(QFont::Monospace);
+    freqFont.setPointSize(freqFont.pointSize() + 16);
     freqFont.setBold(true);
     m_freqEdit->setFont(freqFont);
     m_freqEdit->setAlignment(Qt::AlignRight);
+    m_freqEdit->setStyleSheet(kFreqEditStyle);
     connect(m_freqEdit, &QLineEdit::editingFinished, this, &VfoPanel::onFrequencyEditingFinished);
 
     auto *hzLabel = new QLabel(tr("Hz"), this);
+    hzLabel->setStyleSheet(kDarkLabelStyle);
 
     m_modeCombo = new QComboBox(this);
+    m_modeCombo->setStyleSheet(kComboStyle);
     for (const auto &entry : kModes) {
         m_modeCombo->addItem(QString::fromLatin1(entry.label));
     }
@@ -54,6 +100,7 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
             &VfoPanel::onModeComboChanged);
 
     m_stepCombo = new QComboBox(this);
+    m_stepCombo->setStyleSheet(kComboStyle);
     for (int i = 0; i < kStepCount; ++i) {
         m_stepCombo->addItem(QString::fromLatin1(kStepLabels[i]));
     }
@@ -61,14 +108,21 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     m_stepCombo->setToolTip(tr("Tuning step (scroll the frequency field to tune)"));
 
     m_meterLabel = new QLabel(tr("Signal"), this);
+    m_meterLabel->setStyleSheet(kDarkLabelStyle);
     m_meter = new QProgressBar(this);
     m_meter->setRange(0, 100);
     m_meter->setValue(0);
     m_meter->setTextVisible(false);
+    m_meter->setStyleSheet(
+        "QProgressBar { background: #10161c; border: 1px solid #33424c; border-radius: 3px; }"
+        "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        "  stop:0 #2f8f3a, stop:0.7 #d8c22a, stop:1 #c23b2a); border-radius: 3px; }");
     m_meter->setToolTip(tr("Approximate signal level (uncalibrated - not yet an S-meter in dB)"));
 
     auto *modeLabel = new QLabel(tr("Mode"), this);
+    modeLabel->setStyleSheet(kDarkLabelStyle);
     auto *stepLabel = new QLabel(tr("Step"), this);
+    stepLabel->setStyleSheet(kDarkLabelStyle);
 
     auto *grid = new QGridLayout;
     grid->addWidget(m_freqEdit, 0, 0, 1, 3);

@@ -6,12 +6,18 @@
 #include <QMenuBar>
 #include <QStatusBar>
 #include <QApplication>
+#include <QSplitter>
+#include <QVBoxLayout>
+#include <QWidget>
 #include <cmath>
 
 #include "discoverydialog.h"
 #include "oldprotocol.h"
+#include "panadapterwidget.h"
 #include "rxaudio.h"
+#include "spectrumanalyzer.h"
 #include "vfopanel.h"
+#include "waterfallwidget.h"
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *radioMenu = menuBar()->addMenu(tr("&Radio"));
@@ -28,18 +34,48 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *exitAction = radioMenu->addAction(tr("E&xit"));
     connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
 
+    // Layout mirrors deskHPSDR's radio_create_visual() stacking order
+    // (core/deskhpsdr-src/radio.c): VFO bar, then the receiver panel
+    // (panadapter above waterfall, sharing the frequency axis). Zoom/pan,
+    // sliders and the button toolbar aren't ported yet.
     m_vfoPanel = new VfoPanel(this);
-    setCentralWidget(m_vfoPanel);
+
+    m_panadapter = new PanadapterWidget(this);
+    m_waterfall = new WaterfallWidget(this);
+
+    auto *splitter = new QSplitter(Qt::Vertical, this);
+    splitter->addWidget(m_panadapter);
+    splitter->addWidget(m_waterfall);
+    splitter->setStretchFactor(0, 2);
+    splitter->setStretchFactor(1, 1);
+
+    auto *central = new QWidget(this);
+    auto *layout = new QVBoxLayout(central);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(m_vfoPanel);
+    layout->addWidget(splitter, /*stretch=*/1);
+    setCentralWidget(central);
+
     connect(m_vfoPanel, &VfoPanel::frequencyEditedHz, this, [this](double hz) {
         if (m_connection) {
             m_connection->setRxFrequency(hz);
         }
+        m_panadapter->setCenterFrequencyHz(hz);
     });
     connect(m_vfoPanel, &VfoPanel::modeSelected, this, [this](RxMode mode) {
         if (m_rxAudio) {
             m_rxAudio->setMode(mode);
         }
     });
+
+    m_spectrum = new SpectrumAnalyzer(this);
+    connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {
+        m_panadapter->setSpectrum(db);
+        m_waterfall->pushSpectrum(db);
+    });
+    m_panadapter->setCenterFrequencyHz(m_vfoPanel->frequencyHz());
+    m_panadapter->setSampleRateHz(48000.0);
 
     statusBar()->showMessage(tr("Qhpsdr Ready."));
 }
@@ -90,6 +126,7 @@ void MainWindow::showDiscoveryDialog() {
     connect(m_connection, &OldProtocolConnection::iqSamplesReady, this, [this](const QVector<double> &iq) {
         for (int i = 0; i + 1 < iq.size(); i += 2) {
             m_rxAudio->feedSample(iq[i], iq[i + 1]);
+            m_spectrum->feedSample(iq[i], iq[i + 1]);
         }
     });
     connect(m_rxAudio, &RxAudioChannel::audioBlockReady, this, &MainWindow::playAudioBlock);
