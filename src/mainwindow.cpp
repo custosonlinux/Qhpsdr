@@ -137,8 +137,12 @@ void MainWindow::showDiscoveryDialog() {
     connect(m_rxAudio, &RxAudioChannel::opened, this, [this]() {
         statusBar()->showMessage(tr("Audio engine ready."));
     });
+    connect(m_rxAudio, &RxAudioChannel::buildingWisdom, this, [this]() {
+        statusBar()->showMessage(
+            tr("Building FFT cache (one-time, can take several minutes) - audio starts once this finishes..."));
+    });
     m_rxAudio->open(/*channel=*/0, /*inputSampleRate=*/48000);
-    statusBar()->showMessage(tr("Opening audio engine (first run can take a while)..."));
+    statusBar()->showMessage(tr("Opening audio engine..."));
 
     m_connection = new OldProtocolConnection(this);
     connect(m_connection, &OldProtocolConnection::statsUpdated, this,

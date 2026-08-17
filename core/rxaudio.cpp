@@ -1,6 +1,9 @@
 #include "rxaudio.h"
 
+#include <QDir>
+#include <QFile>
 #include <QMetaObject>
+#include <QStandardPaths>
 #include <thread>
 
 extern "C" {
@@ -49,6 +52,13 @@ Passband defaultPassbandFor(RxMode mode) {
     }
     return {-2600.0, 2600.0};
 }
+
+// Trailing separator required: WDSPwisdom() does a plain strcpy+strncat of
+// "wdspWisdom01" onto whatever is passed in (core/wdsp-2.00/wisdom.c).
+QString wisdomDirectory() {
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return dir.isEmpty() ? QString() : dir + QLatin1Char('/');
+}
 } // namespace
 
 RxAudioChannel::RxAudioChannel(QObject *parent) : QObject(parent) {}
@@ -67,13 +77,24 @@ void RxAudioChannel::open(int channel, int inputSampleRate) {
     m_opening = true;
     m_closePending = false;
 
-    // OpenChannel() plans FFTW filters the first time this block/rate
-    // combination is used - slow and unpredictable (see header comment) -
-    // so it runs on a worker thread. It's plain C with its own internal
-    // locking (ch[channel].csDSP/csEXCH), so calling it off the Qt object's
-    // thread is safe; only touching `this` afterward needs to happen back
-    // on our own thread, hence the invokeMethod hop into finishOpen().
+    // OpenChannel() plans FFTW filters, which is slow the first time any
+    // given size is needed - so load (or, once ever, build and cache to
+    // disk) FFTW wisdom first (see the class comment), and run both on a
+    // worker thread. Plain C with its own internal locking
+    // (ch[channel].csDSP/csEXCH), so calling it off the Qt object's thread
+    // is safe; only touching `this` afterward needs to happen back on our
+    // own thread, hence the invokeMethod hops.
     std::thread([this, channel, inputSampleRate]() {
+        const QString dir = wisdomDirectory();
+        if (!dir.isEmpty()) {
+            QDir().mkpath(dir);
+            if (!QFile::exists(dir + QStringLiteral("wdspWisdom01"))) {
+                QMetaObject::invokeMethod(this, [this]() { emit buildingWisdom(); }, Qt::QueuedConnection);
+            }
+            QByteArray dirBytes = dir.toLocal8Bit();
+            WDSPwisdom(dirBytes.data());
+        }
+
         OpenChannel(channel,
                     kBlockSize,      // in_size
                     2048,            // dsp_size

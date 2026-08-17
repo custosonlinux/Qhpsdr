@@ -32,12 +32,12 @@ enum class RxMode {
 // WDSP and emits demodulated audio.
 //
 // open() is asynchronous: the underlying WDSP OpenChannel() call plans
-// FFTW filters the first time a given block/rate combination is used, which
-// is slow and highly variable (observed 3s-90s+ with no wisdom cache - see
-// WDSPwisdom() in wisdom.c, not wired up yet). Running that on the calling
-// thread would freeze the GUI, so it happens on a worker thread; isOpen()
-// flips to true and opened() fires once it's done. feedSample() silently
-// drops samples until then.
+// FFTW filters, which is slow the first time any given size is needed.
+// open() calls WDSPwisdom() first to load (or, once ever, build and cache
+// to disk) a wisdom file, so every run after the very first one is fast -
+// see buildingWisdom(). Both run on a worker thread so this can't freeze
+// the GUI; isOpen() flips to true and opened() fires once it's done.
+// feedSample() silently drops samples until then.
 //
 // Not yet implemented: noise blankers (create_anbEXT/create_nobEXT in the
 // original), meters, squelch, AGC tuning - WDSP defaults apply.
@@ -68,6 +68,11 @@ signals:
     // Fired once open() has finished and feedSample()/audioBlockReady()
     // are live. Never fires if close() is called before it completes.
     void opened();
+    // Fired instead of (before) opened() completing quickly, when open()
+    // notices no cached FFTW wisdom file exists yet and is about to build
+    // one - a one-time cost (can take several minutes) that's cached to
+    // disk afterward, see WDSPwisdom() in core/wdsp-2.00/wisdom.c.
+    void buildingWisdom();
 
 private:
     void processBlock();
