@@ -28,6 +28,7 @@ private slots:
     void onDeviceFound(const DiscoveredDevice &device);
     void onDiscoveryFinished();
     void onRowActivated(int row);
+    void connectDirectly();
 
 private:
     void addRow(const DiscoveredDevice &device);
@@ -36,7 +37,9 @@ private:
     QTableWidget *m_table = nullptr;
     QPushButton *m_discoverButton = nullptr;
     QPushButton *m_connectButton = nullptr;
+    QPushButton *m_connectDirectButton = nullptr;
     QLineEdit *m_hostEdit = nullptr;
+    QLineEdit *m_portEdit = nullptr;
     QLabel *m_statusLabel = nullptr;
     QList<DiscoveredDevice> m_rowDevices;
     std::optional<DiscoveredDevice> m_selected;

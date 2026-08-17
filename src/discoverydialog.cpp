@@ -3,6 +3,9 @@
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QHostAddress>
+#include <QHostInfo>
+#include <QIntValidator>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -45,10 +48,24 @@ DiscoveryDialog::DiscoveryDialog(QWidget *parent) : QDialog(parent) {
     connect(m_table, &QTableWidget::cellDoubleClicked, this, [this](int row, int) { onRowActivated(row); });
 
     m_hostEdit = new QLineEdit(this);
-    m_hostEdit->setPlaceholderText(tr("Radio IP address (optional, for targeted discovery)"));
+    m_hostEdit->setPlaceholderText(tr("Radio IP address (optional)"));
+
+    m_portEdit = new QLineEdit(this);
+    m_portEdit->setText(QStringLiteral("1024"));
+    m_portEdit->setValidator(new QIntValidator(1, 65535, m_portEdit));
+    m_portEdit->setFixedWidth(60);
+    m_portEdit->setToolTip(tr("Port (default 1024)"));
 
     m_discoverButton = new QPushButton(tr("Discover"), this);
     connect(m_discoverButton, &QPushButton::clicked, this, &DiscoveryDialog::startDiscovery);
+
+    m_connectDirectButton = new QPushButton(tr("Connect Directly"), this);
+    m_connectDirectButton->setToolTip(
+        tr("Skip discovery and connect straight to this address.\n"
+           "Use this when the radio can't be discovered - e.g. over a VPN, where discovery's UDP "
+           "broadcast replies don't get routed back, even though the actual data connection is "
+           "unicast and works fine."));
+    connect(m_connectDirectButton, &QPushButton::clicked, this, &DiscoveryDialog::connectDirectly);
 
     m_connectButton = new QPushButton(tr("Connect"), this);
     m_connectButton->setEnabled(false);
@@ -66,6 +83,8 @@ DiscoveryDialog::DiscoveryDialog(QWidget *parent) : QDialog(parent) {
 
     auto *hostLayout = new QHBoxLayout;
     hostLayout->addWidget(m_hostEdit);
+    hostLayout->addWidget(m_portEdit);
+    hostLayout->addWidget(m_connectDirectButton);
     hostLayout->addWidget(m_discoverButton);
 
     auto *buttonLayout = new QHBoxLayout;
@@ -103,6 +122,35 @@ void DiscoveryDialog::onDiscoveryFinished() {
     m_discoverButton->setEnabled(true);
     m_statusLabel->setText(m_rowDevices.isEmpty() ? tr("No devices found.")
                                                    : tr("Found %1 device(s).").arg(m_rowDevices.size()));
+}
+
+void DiscoveryDialog::connectDirectly() {
+    const QString host = m_hostEdit->text().trimmed();
+    if (host.isEmpty()) {
+        m_statusLabel->setText(tr("Enter an IP address or hostname first."));
+        return;
+    }
+
+    QHostAddress address(host);
+    if (address.isNull()) {
+        // Not a literal IP - try resolving it as a hostname.
+        const QHostInfo info = QHostInfo::fromName(host);
+        if (info.error() != QHostInfo::NoError || info.addresses().isEmpty()) {
+            m_statusLabel->setText(tr("Could not resolve \"%1\".").arg(host));
+            return;
+        }
+        address = info.addresses().constFirst();
+    }
+
+    DiscoveredDevice device;
+    device.protocol = ORIGINAL_PROTOCOL; // the only protocol OldProtocolConnection supports so far
+    device.address = address;
+    device.port = quint16(m_portEdit->text().toUInt());
+    device.name = tr("%1 (direct)").arg(host);
+    device.status = STATE_AVAILABLE;
+
+    m_selected = device;
+    accept();
 }
 
 void DiscoveryDialog::onRowActivated(int row) {
