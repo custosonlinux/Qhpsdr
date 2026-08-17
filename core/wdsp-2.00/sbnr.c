@@ -45,7 +45,9 @@ https://github.com/lucianodato/libspecbleach
 
 #define _CRT_SECURE_NO_WARNINGS
 
-#include <specbleach_adenoiser.h>
+#ifdef WDSP_HAVE_SPECBLEACH
+  #include <specbleach_adenoiser.h>
+#endif
 
 #include "comm.h"
 
@@ -67,7 +69,11 @@ SBNR create_sbnr(int run, int position, int size, double *in, double *out, int r
   a->run = run;
   a->position = position;
   a->rate = rate;
+#ifdef WDSP_HAVE_SPECBLEACH
   a->st = specbleach_adaptive_initialize(a->rate, 20); //20ms frame size, documentation recommends 20-100
+#else
+  a->st = NULL;
+#endif
   a->in = in;
   a->out = out;
   a->reduction_amount = 10.F;
@@ -83,12 +89,15 @@ SBNR create_sbnr(int run, int position, int size, double *in, double *out, int r
 }
 
 void setSamplerate_sbnr(SBNR a, int rate) {
-  specbleach_adaptive_free(a->st);
   a->rate = rate;
+#ifdef WDSP_HAVE_SPECBLEACH
+  specbleach_adaptive_free(a->st);
   a->st = specbleach_adaptive_initialize(a->rate, 20); //20ms frame size, documentation recommends 20-100
+#endif
 }
 
 void xsbnr(SBNR a, int pos) {
+#ifdef WDSP_HAVE_SPECBLEACH
   if (a->run && pos == a->position) {
     SpectralBleachAdaptiveParameters parameters =
     (SpectralBleachAdaptiveParameters) {
@@ -114,13 +123,20 @@ void xsbnr(SBNR a, int pos) {
       out[2 * i + 0] = (double) proc_out[i];
       out[2 * i + 1] = 0.0;
     }
-  } else if (a->out != a->in) {
+    return;
+  }
+#else
+  (void) pos;
+#endif
+  if (a->out != a->in) {
     memcpy(a->out, a->in, a->buffer_size * sizeof(complex));
   }
 }
 
 void destroy_sbnr(SBNR a) {
+#ifdef WDSP_HAVE_SPECBLEACH
   specbleach_adaptive_free(a->st);
+#endif
   _aligned_free(a->input);
   _aligned_free(a->output);
   _aligned_free(a);

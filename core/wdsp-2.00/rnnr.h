@@ -49,7 +49,14 @@ It uses a non modified version of rmnoise and implements a ringbuffer to handle 
 #ifndef _rnnr_h
 #define _rnnr_h
 
-#include "rnnoise.h"
+// Qhpsdr: RNNoise (https://gitlab.xiph.org/xiph/rnnoise) isn't wired into
+// the build yet. Define WDSP_HAVE_RNNOISE and link the real library to
+// enable the NR3 denoiser; until then xrnnr() is a passthrough (see rnnr.c).
+#ifdef WDSP_HAVE_RNNOISE
+  #include "rnnoise.h"
+#else
+typedef struct DenoiseState DenoiseState;
+#endif
 
 #define FRAME_SIZE
 

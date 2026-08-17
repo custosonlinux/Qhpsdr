@@ -47,7 +47,15 @@ https://github.com/lucianodato/libspecbleach
 #ifndef _sbnr_h
 #define _sbnr_h
 
-#include <specbleach_adenoiser.h>
+// Qhpsdr: libspecbleach (https://github.com/lucianodato/libspecbleach) isn't
+// wired into the build yet. Define WDSP_HAVE_SPECBLEACH and link the real
+// library to enable the NR4 spectral denoiser; until then xsbnr() is a
+// passthrough (see sbnr.c).
+#ifdef WDSP_HAVE_SPECBLEACH
+  #include <specbleach_adenoiser.h>
+#else
+typedef void *SpectralBleachHandle;
+#endif
 
 typedef struct _sbnr {
   int run;

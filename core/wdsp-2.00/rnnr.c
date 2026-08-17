@@ -47,7 +47,15 @@ It uses a non modified version of rmnoise and implements a ringbuffer to handle 
 
 #define _CRT_SECURE_NO_WARNINGS
 #include "comm.h"
-#include "rnnoise.h"
+
+#ifdef WDSP_HAVE_RNNOISE
+  #include "rnnoise.h"
+#else
+// Qhpsdr: RNNoise not wired into the build yet - stub frame size/model type,
+// see rnnr.h. All rnnoise_*() calls below are guarded on WDSP_HAVE_RNNOISE.
+typedef struct RNNModel RNNModel;
+  #define RNNR_STUB_FRAME_SIZE 480
+#endif
 
 static inline float db_to_lin(float db) { return powf(10.0f, db / 20.0f); }
 static inline float lin_to_db(float lin) { return 20.0f * log10f(fmaxf(lin, 1e-12f)); }
@@ -177,8 +185,13 @@ RNNR create_rnnr(int run, int position, int size, double *in, double *out, int r
   a->run = run;
   a->position = position;
   a->rate = rate; // not used currently, but here for future use
+#ifdef WDSP_HAVE_RNNOISE
   a->st = rnnoise_create(_rnnr_model);
   a->frame_size = rnnoise_get_frame_size();
+#else
+  a->st = NULL;
+  a->frame_size = RNNR_STUB_FRAME_SIZE;
+#endif
   a->in = in;
   a->out = out;
   a->buffer_size = size;
@@ -228,7 +241,11 @@ void xrnnr(RNNR a, int pos) {
           if (v < -SAFETY_CEIL) { v = -SAFETY_CEIL; }
           to_process[j] = v;
         }
+#ifdef WDSP_HAVE_RNNOISE
         rnnoise_process_frame(a->st, process_out, to_process);
+#else
+        memcpy(process_out, to_process, fs * sizeof(float));
+#endif
         const float inv = (a->gain > 0.0f) ? (1.0f / a->gain) : 0.0f;
         for (int j = 0; j < fs; j++) {
           ring_buffer_put(&a->output_ring, process_out[j] * inv);
@@ -259,7 +276,9 @@ void destroy_rnnr(RNNR a) {
     }
   }
   EnterCriticalSection(&a->cs);
+#ifdef WDSP_HAVE_RNNOISE
   rnnoise_destroy(a->st);
+#endif
   LeaveCriticalSection(&a->cs);
   DeleteCriticalSection(&a->cs);
   _aligned_free(a->to_process_buffer);
@@ -278,6 +297,7 @@ void destroy_rnnr(RNNR a) {
 
 PORT
 void RNNRloadModel(const char *file_path) {
+#ifdef WDSP_HAVE_RNNOISE
   // destroy any in use
   for (int i = 0; i < _rnnr_count; i++) {
     RNNR a = _rnnr_instances[i];
@@ -304,6 +324,9 @@ void RNNRloadModel(const char *file_path) {
     a->run = a->run_old;
     LeaveCriticalSection(&a->cs);
   }
+#else
+  (void) file_path;
+#endif
 }
 
 PORT
