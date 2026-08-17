@@ -5,6 +5,7 @@
 
 class OldProtocolConnection;
 class RxAudioChannel;
+class VfoPanel;
 class QAction;
 class QAudioSink;
 class QIODevice;
@@ -28,6 +29,7 @@ private:
     QAudioSink *m_audioSink = nullptr;
     QIODevice *m_audioDevice = nullptr;
     QAction *m_disconnectAction = nullptr;
+    VfoPanel *m_vfoPanel = nullptr;
 };
 
 #endif // MAINWINDOW_H

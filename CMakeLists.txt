@@ -51,6 +51,8 @@ set(SOURCES
     core/oldprotocol.h
     core/rxaudio.cpp
     core/rxaudio.h
+    src/vfopanel.cpp
+    include/vfopanel.h
 )
 
 qt_add_executable(Qhpsdr ${SOURCES})

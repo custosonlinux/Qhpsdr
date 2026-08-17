@@ -6,10 +6,12 @@
 #include <QMenuBar>
 #include <QStatusBar>
 #include <QApplication>
+#include <cmath>
 
 #include "discoverydialog.h"
 #include "oldprotocol.h"
 #include "rxaudio.h"
+#include "vfopanel.h"
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *radioMenu = menuBar()->addMenu(tr("&Radio"));
@@ -25,6 +27,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     auto *exitAction = radioMenu->addAction(tr("E&xit"));
     connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
+
+    m_vfoPanel = new VfoPanel(this);
+    setCentralWidget(m_vfoPanel);
+    connect(m_vfoPanel, &VfoPanel::frequencyEditedHz, this, [this](double hz) {
+        if (m_connection) {
+            m_connection->setRxFrequency(hz);
+        }
+    });
+    connect(m_vfoPanel, &VfoPanel::modeSelected, this, [this](RxMode mode) {
+        if (m_rxAudio) {
+            m_rxAudio->setMode(mode);
+        }
+    });
 
     statusBar()->showMessage(tr("Qhpsdr Ready."));
 }
@@ -79,11 +94,23 @@ void MainWindow::showDiscoveryDialog() {
     });
     connect(m_rxAudio, &RxAudioChannel::audioBlockReady, this, &MainWindow::playAudioBlock);
 
-    m_connection->connectToDevice(device);
+    m_connection->connectToDevice(device, m_vfoPanel->frequencyHz());
+    m_rxAudio->setMode(m_vfoPanel->rxMode());
+    m_vfoPanel->setConnected(true);
     m_disconnectAction->setEnabled(true);
 }
 
 void MainWindow::playAudioBlock(const QVector<float> &interleavedStereo) {
+    if (!interleavedStereo.isEmpty()) {
+        double sumSq = 0.0;
+        for (float v : interleavedStereo) {
+            sumSq += double(v) * double(v);
+        }
+        // Crude, uncalibrated level - just enough to show the meter moving
+        // with the actual received signal.
+        const double rms = std::sqrt(sumSq / interleavedStereo.size());
+        m_vfoPanel->setSignalLevel(rms / 4.0);
+    }
     if (!m_audioDevice) {
         return;
     }
@@ -108,6 +135,8 @@ void MainWindow::disconnectFromRadio() {
         m_audioSink = nullptr;
         m_audioDevice = nullptr;
     }
+    m_vfoPanel->setConnected(false);
+    m_vfoPanel->setSignalLevel(0.0);
     m_disconnectAction->setEnabled(false);
     statusBar()->showMessage(tr("Disconnected."));
 }
