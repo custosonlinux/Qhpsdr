@@ -31,6 +31,14 @@ enum class RxMode {
 // time; once WDSP's block size worth have accumulated it runs them through
 // WDSP and emits demodulated audio.
 //
+// open() is asynchronous: the underlying WDSP OpenChannel() call plans
+// FFTW filters the first time a given block/rate combination is used, which
+// is slow and highly variable (observed 3s-90s+ with no wisdom cache - see
+// WDSPwisdom() in wisdom.c, not wired up yet). Running that on the calling
+// thread would freeze the GUI, so it happens on a worker thread; isOpen()
+// flips to true and opened() fires once it's done. feedSample() silently
+// drops samples until then.
+//
 // Not yet implemented: noise blankers (create_anbEXT/create_nobEXT in the
 // original), meters, squelch, AGC tuning - WDSP defaults apply.
 class RxAudioChannel : public QObject {
@@ -41,24 +49,33 @@ public:
     ~RxAudioChannel() override;
 
     // channel must be unique among concurrently-open RxAudioChannels (WDSP
-    // indexes internal state by this number).
+    // indexes internal state by this number). Returns once the (slow)
+    // OpenChannel() call has been kicked off on a worker thread; isOpen()
+    // and feedSample() aren't usable until opened() fires.
     void open(int channel, int inputSampleRate);
     void close();
     bool isOpen() const { return m_open; }
 
     void setMode(RxMode mode);
 
-    // i, q normalized to [-1, 1] (e.g. a 24-bit ADC sample / 2^23).
+    // i, q normalized to [-1, 1] (e.g. a 24-bit ADC sample / 2^23). No-op
+    // while the channel is still opening or closed.
     void feedSample(double i, double q);
 
 signals:
     // Interleaved stereo (L, R, L, R, ...), normalized to roughly [-1, 1].
     void audioBlockReady(QVector<float> interleavedStereo);
+    // Fired once open() has finished and feedSample()/audioBlockReady()
+    // are live. Never fires if close() is called before it completes.
+    void opened();
 
 private:
     void processBlock();
+    void finishOpen();
 
     bool m_open = false;
+    bool m_opening = false;
+    bool m_closePending = false;
     int m_channel = 0;
     static constexpr int kBlockSize = 1024; // matches deskHPSDR's default rx->buffer_size
 

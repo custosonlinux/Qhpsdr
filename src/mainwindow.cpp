@@ -55,7 +55,11 @@ void MainWindow::showDiscoveryDialog() {
     m_audioDevice = m_audioSink->start();
 
     m_rxAudio = new RxAudioChannel(this);
+    connect(m_rxAudio, &RxAudioChannel::opened, this, [this]() {
+        statusBar()->showMessage(tr("Audio engine ready."));
+    });
     m_rxAudio->open(/*channel=*/0, /*inputSampleRate=*/48000);
+    statusBar()->showMessage(tr("Opening audio engine (first run can take a while)..."));
 
     m_connection = new OldProtocolConnection(this);
     connect(m_connection, &OldProtocolConnection::statsUpdated, this,

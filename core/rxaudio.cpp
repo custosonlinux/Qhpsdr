@@ -1,5 +1,8 @@
 #include "rxaudio.h"
 
+#include <QMetaObject>
+#include <thread>
+
 extern "C" {
 #include "wdsp.h"
 }
@@ -17,17 +20,38 @@ void RxAudioChannel::open(int channel, int inputSampleRate) {
     m_inBuffer.assign(2 * kBlockSize, 0.0);
     m_outBuffer.assign(2 * kBlockSize, 0.0);
     m_fillCount = 0;
+    m_opening = true;
+    m_closePending = false;
 
-    OpenChannel(m_channel,
-                kBlockSize,      // in_size
-                2048,            // dsp_size
-                inputSampleRate, // input samplerate
-                48000,           // dsp rate
-                48000,           // output samplerate
-                0,               // type: 0 = RXA
-                1,               // state: running
-                0.010, 0.025, 0.0, 0.010, // delay/slew up/down
-                1);              // block fexchange0 until output is ready
+    // OpenChannel() plans FFTW filters the first time this block/rate
+    // combination is used - slow and unpredictable (see header comment) -
+    // so it runs on a worker thread. It's plain C with its own internal
+    // locking (ch[channel].csDSP/csEXCH), so calling it off the Qt object's
+    // thread is safe; only touching `this` afterward needs to happen back
+    // on our own thread, hence the invokeMethod hop into finishOpen().
+    std::thread([this, channel, inputSampleRate]() {
+        OpenChannel(channel,
+                    kBlockSize,      // in_size
+                    2048,            // dsp_size
+                    inputSampleRate, // input samplerate
+                    48000,           // dsp rate
+                    48000,           // output samplerate
+                    0,               // type: 0 = RXA
+                    1,               // state: running
+                    0.010, 0.025, 0.0, 0.010, // delay/slew up/down
+                    1);              // block fexchange0 until output is ready
+        QMetaObject::invokeMethod(this, [this]() { finishOpen(); }, Qt::QueuedConnection);
+    }).detach();
+}
+
+void RxAudioChannel::finishOpen() {
+    m_opening = false;
+    if (m_closePending) {
+        m_closePending = false;
+        m_open = true; // let close() below actually tear it down
+        close();
+        return;
+    }
 
     // setMode() below is a no-op while m_open is still false, so this must
     // come before any Set* calls that need to take effect immediately.
@@ -52,9 +76,16 @@ void RxAudioChannel::open(int channel, int inputSampleRate) {
     SetRXAAGCHangThreshold(m_channel, 100);
 
     setMode(RxMode::AM);
+    emit opened();
 }
 
 void RxAudioChannel::close() {
+    if (m_opening) {
+        // OpenChannel() is still running on the worker thread; tear down
+        // once finishOpen() lands instead of racing it.
+        m_closePending = true;
+        return;
+    }
     if (!m_open) {
         return;
     }
