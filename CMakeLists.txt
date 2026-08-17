@@ -31,6 +31,8 @@ set(SOURCES
     core/discovery.cpp
     core/discovery.h
     core/discovered.h
+    core/oldprotocol.cpp
+    core/oldprotocol.h
 )
 
 qt_add_executable(Qhpsdr ${SOURCES})

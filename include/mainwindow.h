@@ -3,6 +3,9 @@
 
 #include <QMainWindow>
 
+class OldProtocolConnection;
+class QAction;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -12,6 +15,11 @@ public:
 
 private slots:
     void showDiscoveryDialog();
+    void disconnectFromRadio();
+
+private:
+    OldProtocolConnection *m_connection = nullptr;
+    QAction *m_disconnectAction = nullptr;
 };
 
 #endif // MAINWINDOW_H
