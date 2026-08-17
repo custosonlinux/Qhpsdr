@@ -11,6 +11,7 @@
 #include <QIntValidator>
 #include <QPalette>
 #include <QProgressBar>
+#include <QSpinBox>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -114,6 +115,15 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     connect(m_filterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &VfoPanel::onFilterComboChanged);
 
+    m_attenSpin = new QSpinBox(this);
+    m_attenSpin->setRange(0, 31);
+    m_attenSpin->setSuffix(tr(" dB"));
+    m_attenSpin->setStyleSheet(kComboStyle);
+    m_attenSpin->setToolTip(
+        tr("ADC0 step attenuator - raise this if the S-meter is pinned regardless of frequency "
+           "(front-end/ADC overload)."));
+    connect(m_attenSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &VfoPanel::attenuationChanged);
+
     m_meterLabel = new QLabel(tr("Signal"), this);
     m_meterLabel->setStyleSheet(kDarkLabelStyle);
     m_meter = new QProgressBar(this);
@@ -137,6 +147,8 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     stepLabel->setStyleSheet(kDarkLabelStyle);
     auto *filterLabel = new QLabel(tr("Filter"), this);
     filterLabel->setStyleSheet(kDarkLabelStyle);
+    auto *attenLabel = new QLabel(tr("Atten"), this);
+    attenLabel->setStyleSheet(kDarkLabelStyle);
 
     auto *grid = new QGridLayout;
     grid->addWidget(m_freqEdit, 0, 0, 1, 3);
@@ -147,8 +159,10 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     grid->addWidget(m_stepCombo, 1, 3);
     grid->addWidget(filterLabel, 1, 4);
     grid->addWidget(m_filterCombo, 1, 5);
+    grid->addWidget(attenLabel, 1, 6);
+    grid->addWidget(m_attenSpin, 1, 7);
     grid->addWidget(m_meterLabel, 2, 0);
-    grid->addWidget(m_meter, 2, 1, 1, 5);
+    grid->addWidget(m_meter, 2, 1, 1, 7);
 
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(grid);
@@ -193,6 +207,8 @@ void VfoPanel::repopulateFilterCombo() {
     }
 }
 
+int VfoPanel::attenuationDb() const { return m_attenSpin ? m_attenSpin->value() : 0; }
+
 void VfoPanel::setSignalDbm(double dbm) {
     // core/deskhpsdr-src/meter.c: S9 = -73dBm (HF), 6dB per S-unit below
     // S9, direct dB-over-S9 above it (e.g. "S9+20").
@@ -213,6 +229,7 @@ void VfoPanel::setConnected(bool connected) {
     m_modeCombo->setEnabled(connected);
     m_stepCombo->setEnabled(connected);
     m_filterCombo->setEnabled(connected);
+    m_attenSpin->setEnabled(connected);
 }
 
 void VfoPanel::onFrequencyEditingFinished() {

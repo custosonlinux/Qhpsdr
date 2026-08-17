@@ -9,6 +9,7 @@ class QLineEdit;
 class QComboBox;
 class QProgressBar;
 class QLabel;
+class QSpinBox;
 
 // Minimal VFO panel: frequency readout/entry, mode + tuning-step + filter
 // selectors, and an (uncalibrated) signal level meter. Functionally
@@ -39,6 +40,11 @@ public:
     // path yet), 6dB/S-unit below S9, direct dB-over-S9 above it.
     void setSignalDbm(double dbm);
 
+    // Current ADC0 step attenuator setting (0-31 dB) - added to the raw
+    // dBFS meter reading before display so increasing attenuation doesn't
+    // make the meter falsely show a weaker signal (see setSignalDbm()).
+    int attenuationDb() const;
+
     void setConnected(bool connected);
 
 signals:
@@ -46,6 +52,7 @@ signals:
     void frequencyEditedHz(double hz);
     void modeSelected(RxMode mode);
     void filterSelected(double lowHz, double highHz);
+    void attenuationChanged(int db);
 
 protected:
     void wheelEvent(QWheelEvent *event) override;
@@ -61,6 +68,7 @@ private:
     QComboBox *m_modeCombo = nullptr;
     QComboBox *m_stepCombo = nullptr;
     QComboBox *m_filterCombo = nullptr;
+    QSpinBox *m_attenSpin = nullptr;
     QProgressBar *m_meter = nullptr;
     QLabel *m_meterLabel = nullptr;
 

@@ -23,13 +23,12 @@ class QTimer;
 //    (metis_write()/ozy_send_buffer(), receive_thread()).
 //  - Each USB sub-frame: 3-byte sync (0x7F 0x7F 0x7F), C0 "register
 //    select" byte, C1-C4 register payload, then (on receive) 63
-//    sample-sets of 2-byte mic + 3-byte I + 3-byte Q = 8 bytes each.
+//    sample-sets of 3-byte I + 3-byte Q + 2-byte mic = 8 bytes each.
 //
 // NOT yet implemented (left for later steps): TX I/Q, local microphone
-// audio, attenuation/antenna/filter board registers, more than one
-// receiver, TCP transport. Those are additional C&C registers in the same
-// framing and can be added incrementally without changing the wire
-// handling done here.
+// audio, antenna/filter board registers, more than one receiver, TCP
+// transport. Those are additional C&C registers in the same framing and
+// can be added incrementally without changing the wire handling done here.
 class OldProtocolConnection : public QObject {
     Q_OBJECT
 
@@ -42,6 +41,13 @@ public:
 
     void setRxFrequency(double hz) { m_rxFrequencyHz = hz; }
     double rxFrequency() const { return m_rxFrequencyHz; }
+
+    // Standard HPSDR step attenuator on ADC0 (core/deskhpsdr-src/
+    // old_protocol.c: output_buffer[C4] = 0x20 | (adc[0].attenuation &
+    // 0x1F), sent as the C0=0x14 register). 0-31 dB. Not applicable to
+    // HermesLite2's different gain scheme, which isn't implemented here.
+    void setAttenuation(int db) { m_attenuationDb = qBound(0, db, 31); }
+    int attenuation() const { return m_attenuationDb; }
 
 signals:
     void connected();
@@ -73,8 +79,9 @@ private:
     quint32 m_sendSequence = 0;
     std::array<uchar, 1032> m_outputBuffer{};
     int m_outputOffset = 8; // 8 or 520: which half of m_outputBuffer we're filling
-    int m_outputCommandState = 1; // 1 = send TX/DUC freq next, 2 = send RX1 freq next
+    int m_outputCommandState = 1; // 1 = TX/DUC freq, 2 = RX1 freq, 3 = ADC0 attenuator, next
     double m_rxFrequencyHz = 7100000.0;
+    int m_attenuationDb = 0;
 
     quint64 m_packetsReceived = 0;
     quint64 m_samplesReceived = 0;

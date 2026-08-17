@@ -80,6 +80,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 Qt::QueuedConnection);
         }
     });
+    connect(m_vfoPanel, &VfoPanel::attenuationChanged, this, [this](int db) {
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, db]() { m_connection->setAttenuation(db); }, Qt::QueuedConnection);
+        }
+    });
 
     m_spectrum = new SpectrumAnalyzer(this);
     connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {
@@ -221,8 +227,12 @@ void MainWindow::showDiscoveryDialog() {
     // blocking QAudioSink::write() call would have been.
     connect(m_rxAudio, &RxAudioChannel::audioBlockReady, m_rxAudio,
             [this](const QVector<float> &block) { playAudioBlock(block); });
-    connect(m_rxAudio, &RxAudioChannel::meterUpdated, this,
-            [this](double dbm) { m_vfoPanel->setSignalDbm(dbm); });
+    connect(m_rxAudio, &RxAudioChannel::meterUpdated, this, [this](double dbm) {
+        // Compensate for whatever ADC0 attenuation is currently dialed in,
+        // so raising it to fight front-end overload doesn't make the
+        // meter falsely read a weaker signal - see VfoPanel::attenuationDb().
+        m_vfoPanel->setSignalDbm(dbm + m_vfoPanel->attenuationDb());
+    });
     QMetaObject::invokeMethod(
         m_rxAudio,
         [this]() {

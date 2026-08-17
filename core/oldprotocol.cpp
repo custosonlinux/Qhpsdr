@@ -125,9 +125,17 @@ void OldProtocolConnection::sendOutputSubframe() {
         frame[C0] = 0x02; // TX/DUC frequency
         put32BE(&frame[C1], quint32(m_rxFrequencyHz));
         m_outputCommandState = 2;
-    } else {
+    } else if (m_outputCommandState == 2) {
         frame[C0] = 0x04; // RX1 DDC frequency
         put32BE(&frame[C1], quint32(m_rxFrequencyHz));
+        m_outputCommandState = 3;
+    } else {
+        // Standard HPSDR ADC0 step attenuator (core/deskhpsdr-src/
+        // old_protocol.c: output_buffer[C4] = 0x20 | (adc[0].attenuation &
+        // 0x1F); bit 5 must stay set or the attenuator reads as 0dB
+        // regardless of the low bits).
+        frame[C0] = 0x14;
+        frame[C4] = uchar(0x20 | (m_attenuationDb & 0x1F));
         m_outputCommandState = 1;
     }
     // Payload (mic audio / TX I-Q, offset 8..511): silence, since local
@@ -189,16 +197,20 @@ void OldProtocolConnection::parseSubframe(const uchar *frame) {
     // frame[C0] carries PTT/dot/dash status bits on receive; not consumed
     // yet since TX isn't implemented.
 
-    // Payload: 63 sample-sets of 2-byte mic + 3-byte I + 3-byte Q (single
-    // receiver, the default until multi-DDC support is added).
+    // Payload: 63 sample-sets of 3-byte I + 3-byte Q + 2-byte mic (single
+    // receiver, the default until multi-DDC support is added). Order
+    // confirmed against core/deskhpsdr-src/old_protocol.c's
+    // process_ozy_byte(): LEFT_SAMPLE_HI/MID/LOW (I), then
+    // RIGHT_SAMPLE_HI/MID/LOW (Q), then only afterward MIC_SAMPLE_HI/LOW -
+    // NOT mic-first as this used to assume.
     constexpr double kScale = 1.0 / 8388608.0; // 2^23, 24-bit signed ADC sample
     QVector<double> iq;
     iq.reserve(63 * 2);
     const uchar *p = frame + 8;
     for (int i = 0; i < 63; ++i, p += 8) {
-        // p[0..1]: mic sample (unused for now)
-        qint32 iSample = get24BESigned(p + 2);
-        qint32 qSample = get24BESigned(p + 5);
+        qint32 iSample = get24BESigned(p);
+        qint32 qSample = get24BESigned(p + 3);
+        // p[6..7]: mic sample (unused for now)
         iq.append(double(iSample) * kScale);
         iq.append(double(qSample) * kScale);
         ++m_samplesReceived;
