@@ -108,3 +108,7 @@ int defaultFilterIndexForMode(RxMode mode) {
     }
     return 0;
 }
+
+RxMode defaultModeForFrequency(double hz) {
+    return hz < 10000000.0 ? RxMode::LSB : RxMode::USB;
+}

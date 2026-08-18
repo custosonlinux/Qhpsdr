@@ -1,6 +1,7 @@
 #include "panadapterwidget.h"
 
 #include <QLinearGradient>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <cmath>
@@ -150,4 +151,20 @@ void PanadapterWidget::paintEvent(QPaintEvent *) {
 
     p.setPen(QColor(0x40, 0x60, 0x70));
     p.drawRect(plot.adjusted(0, 0, -1, -1));
+}
+
+void PanadapterWidget::mousePressEvent(QMouseEvent *event) {
+    if (event->button() != Qt::LeftButton) {
+        QWidget::mousePressEvent(event);
+        return;
+    }
+    const QRect full = rect();
+    const QRect plot(kLeftMargin, kTopMargin, full.width() - kLeftMargin - 4, full.height() - kTopMargin - 4);
+    if (plot.width() <= 0 || !plot.contains(event->pos())) {
+        return;
+    }
+    const double loHz = m_centerHz - m_sampleRateHz / 2.0;
+    const double hiHz = m_centerHz + m_sampleRateHz / 2.0;
+    const double t = double(event->pos().x() - plot.left()) / double(plot.width());
+    emit frequencyClicked(loHz + t * (hiHz - loHz));
 }

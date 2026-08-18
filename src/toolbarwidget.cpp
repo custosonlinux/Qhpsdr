@@ -4,6 +4,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPalette>
+#include <QSignalBlocker>
 #include <QSlider>
 
 namespace {
@@ -118,6 +119,16 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
 }
 
 double ToolbarWidget::rfGainDb() const { return m_rfGainSlider ? double(m_rfGainSlider->value()) : 0.0; }
+
+void ToolbarWidget::setFrequencyHz(double hz) {
+    for (int i = 0; i < int(sizeof(kBands) / sizeof(kBands[0])); ++i) {
+        if (hz >= kBands[i].lowHz && hz <= kBands[i].highHz) {
+            const QSignalBlocker blocker(m_bandCombo);
+            m_bandCombo->setCurrentIndex(i);
+            return;
+        }
+    }
+}
 
 void ToolbarWidget::setConnected(bool connected) {
     m_bandCombo->setEnabled(connected);

@@ -22,6 +22,13 @@ public:
 
     void setConnected(bool connected);
 
+    // Selects whichever band's range contains hz, without emitting
+    // bandSelected() - for keeping the combo in sync with frequency
+    // changes that didn't originate from picking a band (typed frequency,
+    // wheel-tuning, panadapter click, or the app's own startup default).
+    // No-op if hz doesn't fall in any listed band.
+    void setFrequencyHz(double hz);
+
     // RF gain calibration offset in dB, subtracted from the displayed
     // S-meter reading (core/deskhpsdr-src/radio.c: adc[0].gain, a pure
     // calibration constant for standard - non-HermesLite2 - boards, not

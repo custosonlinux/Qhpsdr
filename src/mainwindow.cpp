@@ -15,6 +15,7 @@
 #include <cmath>
 
 #include "discoverydialog.h"
+#include "filtertable.h"
 #include "oldprotocol.h"
 #include "panadapterwidget.h"
 #include "rxaudio.h"
@@ -65,13 +66,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     layout->addWidget(m_toolbar);
     setCentralWidget(central);
 
-    connect(m_vfoPanel, &VfoPanel::frequencyEditedHz, this, [this](double hz) {
-        if (m_connection) {
-            QMetaObject::invokeMethod(
-                m_connection, [this, hz]() { m_connection->setRxFrequency(hz); }, Qt::QueuedConnection);
-        }
-        m_panadapter->setCenterFrequencyHz(hz);
-    });
+    connect(m_vfoPanel, &VfoPanel::frequencyEditedHz, this, [this](double hz) { retuneTo(hz); });
+    connect(m_panadapter, &PanadapterWidget::frequencyClicked, this, [this](double hz) { retuneTo(hz); });
     connect(m_vfoPanel, &VfoPanel::modeSelected, this, [this](RxMode mode) {
         if (m_rxAudio) {
             QMetaObject::invokeMethod(
@@ -92,12 +88,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         }
     });
     connect(m_toolbar, &ToolbarWidget::bandSelected, this, [this](double hz) {
-        m_vfoPanel->setFrequencyHz(hz);
-        if (m_connection) {
+        retuneTo(hz);
+        // Picking a band (unlike just retuning within one) recalls a
+        // sensible default mode - see core/filtertable.h's
+        // defaultModeForFrequency(). A plain typed/clicked/wheeled
+        // frequency change leaves the current mode alone.
+        const RxMode mode = defaultModeForFrequency(hz);
+        m_vfoPanel->setRxMode(mode);
+        if (m_rxAudio) {
             QMetaObject::invokeMethod(
-                m_connection, [this, hz]() { m_connection->setRxFrequency(hz); }, Qt::QueuedConnection);
+                m_rxAudio, [this, mode]() { m_rxAudio->setMode(mode); }, Qt::QueuedConnection);
         }
-        m_panadapter->setCenterFrequencyHz(hz);
     });
     connect(m_toolbar, &ToolbarWidget::afGainChanged, this, [this](double dB) {
         if (m_rxAudio) {
@@ -116,6 +117,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     });
     m_panadapter->setCenterFrequencyHz(m_vfoPanel->frequencyHz());
     m_panadapter->setSampleRateHz(48000.0);
+    m_toolbar->setFrequencyHz(m_vfoPanel->frequencyHz());
 
     // Painting on every incoming spectrum frame (~23/s) made each frame's
     // handler expensive enough (grid+trace redraw, waterfall image scroll,
@@ -317,6 +319,16 @@ void MainWindow::playAudioBlock(const QVector<float> &interleavedStereo) {
     }
     m_audioDevice->write(reinterpret_cast<const char *>(interleavedStereo.constData()),
                           interleavedStereo.size() * qint64(sizeof(float)));
+}
+
+void MainWindow::retuneTo(double hz) {
+    m_vfoPanel->setFrequencyHz(hz);
+    if (m_connection) {
+        QMetaObject::invokeMethod(
+            m_connection, [this, hz]() { m_connection->setRxFrequency(hz); }, Qt::QueuedConnection);
+    }
+    m_panadapter->setCenterFrequencyHz(hz);
+    m_toolbar->setFrequencyHz(hz);
 }
 
 void MainWindow::disconnectFromRadio() {

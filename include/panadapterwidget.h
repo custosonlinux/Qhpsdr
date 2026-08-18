@@ -21,8 +21,15 @@ public:
     void setSampleRateHz(double hz);
     void setDbRange(float minDb, float maxDb);
 
+signals:
+    // Emitted on a left click inside the plot area, converted from pixel
+    // position to frequency using the same loHz/hiHz mapping paintEvent()
+    // draws the axis with.
+    void frequencyClicked(double hz);
+
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
 
 private:
     QVector<float> m_spectrum;

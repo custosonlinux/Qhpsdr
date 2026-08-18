@@ -73,7 +73,9 @@ private:
     QLabel *m_meterLabel = nullptr;
 
     double m_frequencyHz = 7100000.0;
-    RxMode m_mode = RxMode::AM;
+    // Actual initial value is set in the constructor from
+    // defaultModeForFrequency(m_frequencyHz) - see core/filtertable.h.
+    RxMode m_mode = RxMode::LSB;
 };
 
 #endif // QHPSDR_VFOPANEL_H

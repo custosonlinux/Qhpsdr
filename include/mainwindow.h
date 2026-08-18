@@ -32,6 +32,11 @@ private:
     // Runs on m_workerThread (writes to QAudioSink, which can block).
     void playAudioBlock(const QVector<float> &interleavedStereo);
     void repaintDisplays();
+    // Shared by every way the tuned frequency can change (typed, wheel,
+    // panadapter click, band button): updates the VFO display, pushes the
+    // new frequency to the radio, and keeps the panadapter and toolbar's
+    // band combo in sync.
+    void retuneTo(double hz);
 
     // OldProtocolConnection + RxAudioChannel (network I/O and WDSP audio
     // demod) live on m_workerThread; SpectrumAnalyzer (the panadapter's

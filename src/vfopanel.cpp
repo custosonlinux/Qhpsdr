@@ -169,7 +169,7 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     layout->addStretch();
 
     updateFrequencyDisplay();
-    setRxMode(m_mode);
+    setRxMode(defaultModeForFrequency(m_frequencyHz));
     setConnected(false);
 }
 
