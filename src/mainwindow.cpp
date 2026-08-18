@@ -13,6 +13,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <algorithm>
 #include <cmath>
 
 #include "discoverydialog.h"
@@ -270,9 +271,32 @@ void MainWindow::repaintDisplays() {
         if (m_dbCeil - m_dbFloor < 20.0f) {
             m_dbCeil = m_dbFloor + 20.0f;
         }
+
+        // The waterfall's color mapping needs its own, differently-anchored
+        // range from the panadapter's: raw min/max (above) makes a single-
+        // frame FFT bin's noise (itself spiky - a few dB of per-bin
+        // variance even for flat noise, no averaging here) dominate the
+        // middle of the gradient, so the whole waterfall looked green with
+        // no contrast against real signals. Anchor to the *median* bin
+        // power instead (a stable noise-floor estimate, unlike min/max)
+        // and use a fixed span above it - background noise then sits in
+        // the gradient's black/blue end regardless of the band's absolute
+        // level, and only bins meaningfully stronger than the noise floor
+        // reach green/yellow/red.
+        QVector<float> sorted = displaySpectrum;
+        std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+        const float noiseFloor = sorted[sorted.size() / 2];
+        constexpr float kWaterfallSpanDb = 30.0f;
+        const float targetFloor = noiseFloor - 4.0f;
+        const float targetCeil = std::max(noiseFloor + kWaterfallSpanDb, frameMax + 3.0f);
+        m_waterfallFloor += kAlpha * (targetFloor - m_waterfallFloor);
+        m_waterfallCeil += kAlpha * (targetCeil - m_waterfallCeil);
+        if (m_waterfallCeil - m_waterfallFloor < 15.0f) {
+            m_waterfallCeil = m_waterfallFloor + 15.0f;
+        }
     }
     m_panadapter->setDbRange(m_dbFloor, m_dbCeil);
-    m_waterfall->setDbRange(m_dbFloor, m_dbCeil);
+    m_waterfall->setDbRange(m_waterfallFloor, m_waterfallCeil);
     m_panadapter->setSampleRateHz(displaySampleRateHz);
     m_panadapter->setSpectrum(displaySpectrum);
     m_waterfall->pushSpectrum(displaySpectrum);

@@ -104,6 +104,12 @@ private:
     bool m_spectrumDirty = false;
     float m_dbFloor = -120.0f;
     float m_dbCeil = -40.0f;
+    // Waterfall color-mapping range - deliberately separate from
+    // m_dbFloor/m_dbCeil above (the panadapter's axis range): see
+    // repaintDisplays(), anchored to the noise floor rather than raw
+    // min/max so background noise renders as blue/black.
+    float m_waterfallFloor = -120.0f;
+    float m_waterfallCeil = -90.0f;
 
     // Keyed by ToolbarWidget::bandIndexForFrequency() - see
     // updateBandStack(). Persisted via save/loadSettings().
