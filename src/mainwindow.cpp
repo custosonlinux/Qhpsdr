@@ -251,8 +251,12 @@ void MainWindow::showDiscoveryDialog() {
         // so raising it to fight front-end overload doesn't make the
         // meter falsely read a weaker signal - see VfoPanel::attenuationDb().
         // Also fold in the toolbar's RF gain calibration offset - see
-        // ToolbarWidget::rfGainDb().
-        m_vfoPanel->setSignalDbm(dbm + m_vfoPanel->attenuationDb() + m_toolbar->rfGainDb());
+        // ToolbarWidget::rfGainDb(). Subtracted, not added: matches
+        // core/deskhpsdr-src/receiver.c's rx_update_display() formula
+        // ("level += calib + attenuation - adc[rx->adc].gain") - more RF
+        // gain means the same real signal reads hotter internally, so it
+        // has to come back out to stay calibrated.
+        m_vfoPanel->setSignalDbm(dbm + m_vfoPanel->attenuationDb() - m_toolbar->rfGainDb());
     });
     QMetaObject::invokeMethod(
         m_rxAudio,
