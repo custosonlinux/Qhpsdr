@@ -117,6 +117,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 m_rxAudio, [this, dB]() { m_rxAudio->setAfGain(dB); }, Qt::QueuedConnection);
         }
     });
+    connect(m_toolbar, &ToolbarWidget::agcModeChanged, this, [this](AgcMode mode) {
+        if (m_rxAudio) {
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, mode]() { m_rxAudio->setAgcMode(mode); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_toolbar, &ToolbarWidget::agcTopChanged, this, [this](double dB) {
+        if (m_rxAudio) {
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, dB]() { m_rxAudio->setAgcTop(dB); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_toolbar, &ToolbarWidget::noiseBlankerChanged, this, [this](NoiseBlankerMode mode) {
+        if (m_rxAudio) {
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, mode]() { m_rxAudio->setNoiseBlanker(mode); }, Qt::QueuedConnection);
+        }
+    });
 
     m_spectrum = new SpectrumAnalyzer(this);
     connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {
@@ -234,6 +252,9 @@ void MainWindow::saveSettings() {
     settings.setValue(QStringLiteral("afGainDb"), m_toolbar->afGainDb());
     settings.setValue(QStringLiteral("rfGainDb"), m_toolbar->rfGainDb());
     settings.setValue(QStringLiteral("zoomFactor"), m_toolbar->zoomFactor());
+    settings.setValue(QStringLiteral("agcMode"), int(m_toolbar->agcMode()));
+    settings.setValue(QStringLiteral("agcTopDb"), m_toolbar->agcTopDb());
+    settings.setValue(QStringLiteral("noiseBlankerMode"), int(m_toolbar->noiseBlankerMode()));
     settings.endGroup();
 }
 
@@ -254,6 +275,10 @@ void MainWindow::loadSettings() {
     m_toolbar->setAfGainDb(settings.value(QStringLiteral("afGainDb")).toDouble());
     m_toolbar->setRfGainDb(settings.value(QStringLiteral("rfGainDb")).toDouble());
     m_toolbar->setZoomFactor(settings.value(QStringLiteral("zoomFactor"), 1).toInt());
+    m_toolbar->setAgcMode(AgcMode(settings.value(QStringLiteral("agcMode"), int(AgcMode::Medium)).toInt()));
+    m_toolbar->setAgcTopDb(settings.value(QStringLiteral("agcTopDb"), 80.0).toDouble());
+    m_toolbar->setNoiseBlankerMode(
+        NoiseBlankerMode(settings.value(QStringLiteral("noiseBlankerMode"), int(NoiseBlankerMode::Off)).toInt()));
     settings.endGroup();
 }
 
@@ -312,6 +337,21 @@ void MainWindow::showDiscoveryDialog() {
         // depending on how long OpenChannel()/FFTW planning took).
         QMetaObject::invokeMethod(
             m_rxAudio, [this]() { m_rxAudio->setMode(m_vfoPanel->rxMode()); }, Qt::QueuedConnection);
+        // Same race, same fix, for whatever AGC mode/gain and noise
+        // blanker setting the toolbar already holds (e.g. restored from
+        // saved settings) - finishOpen() only applies its own AGC_MEDIUM/
+        // NB-off baseline.
+        const AgcMode agcMode = m_toolbar->agcMode();
+        const double agcTop = m_toolbar->agcTopDb();
+        const NoiseBlankerMode nbMode = m_toolbar->noiseBlankerMode();
+        QMetaObject::invokeMethod(
+            m_rxAudio,
+            [this, agcMode, agcTop, nbMode]() {
+                m_rxAudio->setAgcMode(agcMode);
+                m_rxAudio->setAgcTop(agcTop);
+                m_rxAudio->setNoiseBlanker(nbMode);
+            },
+            Qt::QueuedConnection);
     });
     connect(m_rxAudio, &RxAudioChannel::buildingWisdom, this, [this]() {
         statusBar()->showMessage(

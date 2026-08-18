@@ -112,6 +112,45 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     }
     m_zoomCombo->setToolTip(tr("Panadapter/waterfall zoom, centered on the tuned frequency."));
 
+    auto *agcLabel = new QLabel(tr("AGC"), this);
+    agcLabel->setStyleSheet(kDarkLabelStyle);
+    m_agcCombo = new QComboBox(this);
+    m_agcCombo->setStyleSheet(kComboStyle);
+    // core/deskhpsdr-src/agc.h's _agc_enum + sliders.c's agc_labels[] -
+    // no separate "auto" mode exists, this is the complete set.
+    for (const char *label : {"AGC-OFF", "AGC-L", "AGC-S", "AGC-M", "AGC-F"}) {
+        m_agcCombo->addItem(QString::fromLatin1(label));
+    }
+    m_agcCombo->setCurrentIndex(int(AgcMode::Medium));
+    connect(m_agcCombo, QOverload<int>::of(&QComboBox::activated), this,
+            [this](int index) { emit agcModeChanged(AgcMode(index)); });
+
+    m_agcTopSlider = new QSlider(Qt::Horizontal, this);
+    m_agcTopSlider->setStyleSheet(kSliderStyle);
+    // core/deskhpsdr-src/receiver.c: rx->agc_gain range -20..120dB, default 80.
+    m_agcTopSlider->setRange(-20, 120);
+    m_agcTopSlider->setValue(80);
+    m_agcTopValueLabel = new QLabel(tr("80 dB"), this);
+    m_agcTopValueLabel->setStyleSheet(kDarkLabelStyle);
+    m_agcTopValueLabel->setMinimumWidth(48);
+    m_agcTopSlider->setToolTip(tr("AGC gain ceiling (\"Top\") - applies regardless of AGC mode."));
+    connect(m_agcTopSlider, &QSlider::valueChanged, this, [this](int value) {
+        m_agcTopValueLabel->setText(tr("%1 dB").arg(value));
+        emit agcTopChanged(double(value));
+    });
+
+    auto *nbLabel = new QLabel(tr("NB"), this);
+    nbLabel->setStyleSheet(kDarkLabelStyle);
+    m_nbCombo = new QComboBox(this);
+    m_nbCombo->setStyleSheet(kComboStyle);
+    for (const char *label : {"NB Off", "NB", "NB2"}) {
+        m_nbCombo->addItem(QString::fromLatin1(label));
+    }
+    m_nbCombo->setToolTip(tr("Impulse noise blanker (two different algorithms - try both, NB2 often "
+                              "does better on strong/close impulse noise)."));
+    connect(m_nbCombo, QOverload<int>::of(&QComboBox::activated), this,
+            [this](int index) { emit noiseBlankerChanged(NoiseBlankerMode(index)); });
+
     auto *layout = new QHBoxLayout(this);
     layout->addWidget(bandLabel);
     layout->addWidget(m_bandCombo);
@@ -126,6 +165,14 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     layout->addSpacing(16);
     layout->addWidget(zoomLabel);
     layout->addWidget(m_zoomCombo);
+    layout->addSpacing(16);
+    layout->addWidget(agcLabel);
+    layout->addWidget(m_agcCombo);
+    layout->addWidget(m_agcTopSlider, /*stretch=*/1);
+    layout->addWidget(m_agcTopValueLabel);
+    layout->addSpacing(16);
+    layout->addWidget(nbLabel);
+    layout->addWidget(m_nbCombo);
 
     setConnected(false);
 }
@@ -176,4 +223,33 @@ void ToolbarWidget::setConnected(bool connected) {
     m_bandCombo->setEnabled(connected);
     m_afGainSlider->setEnabled(connected);
     m_rfGainSlider->setEnabled(connected);
+    m_agcCombo->setEnabled(connected);
+    m_agcTopSlider->setEnabled(connected);
+    m_nbCombo->setEnabled(connected);
+}
+
+AgcMode ToolbarWidget::agcMode() const { return m_agcCombo ? AgcMode(m_agcCombo->currentIndex()) : AgcMode::Medium; }
+
+void ToolbarWidget::setAgcMode(AgcMode mode) {
+    if (m_agcCombo) {
+        m_agcCombo->setCurrentIndex(int(mode));
+    }
+}
+
+double ToolbarWidget::agcTopDb() const { return m_agcTopSlider ? double(m_agcTopSlider->value()) : 80.0; }
+
+void ToolbarWidget::setAgcTopDb(double dB) {
+    if (m_agcTopSlider) {
+        m_agcTopSlider->setValue(int(dB));
+    }
+}
+
+NoiseBlankerMode ToolbarWidget::noiseBlankerMode() const {
+    return m_nbCombo ? NoiseBlankerMode(m_nbCombo->currentIndex()) : NoiseBlankerMode::Off;
+}
+
+void ToolbarWidget::setNoiseBlankerMode(NoiseBlankerMode mode) {
+    if (m_nbCombo) {
+        m_nbCombo->setCurrentIndex(int(mode));
+    }
 }

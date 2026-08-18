@@ -90,16 +90,10 @@ void RxAudioChannel::finishOpen() {
     SetRXAAMDSBMode(m_channel, 0);
     SetRXAPanelRun(m_channel, 1);
 
-    // AGC defaults (deskHPSDR's receiver.c: rx->agc/agc_gain/agc_slope
-    // defaults). Without an explicit mode, WDSP's AGC stays at whatever
-    // create_rxa() zero-initializes it to, which mutes the output.
-    SetRXAAGCMode(m_channel, 3 /* AGC_MEDIUM */);
-    SetRXAAGCTop(m_channel, 80.0);
-    SetRXAAGCSlope(m_channel, 35);
-    SetRXAAGCAttack(m_channel, 2);
-    SetRXAAGCHang(m_channel, 0);
-    SetRXAAGCDecay(m_channel, 50);
-    SetRXAAGCHangThreshold(m_channel, 100);
+    // Without an explicit mode, WDSP's AGC stays at whatever create_rxa()
+    // zero-initializes it to, which mutes the output.
+    setAgcMode(AgcMode::Medium);
+    setNoiseBlanker(NoiseBlankerMode::Off);
 
     setMode(RxMode::AM);
     emit opened();
@@ -153,6 +147,76 @@ void RxAudioChannel::setAfGain(double dB) {
     SetRXAPanelGain1(m_channel, amplitude);
 }
 
+void RxAudioChannel::setAgcMode(AgcMode mode) {
+    if (!m_open) {
+        return;
+    }
+    SetRXAAGCMode(m_channel, static_cast<int>(mode));
+    if (mode != AgcMode::Off) {
+        // Per-mode attack/hang/decay/hang-threshold presets, exactly
+        // matching core/deskhpsdr-src/receiver.c's rx_set_agc() - deskHPSDR
+        // makes no further calls at all for AGC_OFF.
+        SetRXAAGCAttack(m_channel, 2);
+        switch (mode) {
+        case AgcMode::Long:
+            SetRXAAGCHang(m_channel, 2000);
+            SetRXAAGCDecay(m_channel, 2000);
+            SetRXAAGCHangThreshold(m_channel, 0); // rx->agc_hang_threshold default
+            break;
+        case AgcMode::Slow:
+            SetRXAAGCHang(m_channel, 1000);
+            SetRXAAGCDecay(m_channel, 500);
+            SetRXAAGCHangThreshold(m_channel, 0);
+            break;
+        case AgcMode::Fast:
+            SetRXAAGCHang(m_channel, 0);
+            SetRXAAGCDecay(m_channel, 50);
+            SetRXAAGCHangThreshold(m_channel, 100);
+            break;
+        case AgcMode::Medium:
+        default:
+            SetRXAAGCHang(m_channel, 0);
+            SetRXAAGCDecay(m_channel, 250);
+            SetRXAAGCHangThreshold(m_channel, 100);
+            break;
+        }
+        SetRXAAGCSlope(m_channel, 35); // rx->agc_slope default; no dedicated UI yet
+        SetRXAAGCTop(m_channel, m_agcTopDb);
+    }
+}
+
+void RxAudioChannel::setAgcTop(double dB) {
+    m_agcTopDb = dB;
+    if (m_open) {
+        SetRXAAGCTop(m_channel, dB);
+    }
+}
+
+void RxAudioChannel::setNoiseBlanker(NoiseBlankerMode mode) {
+    m_nbMode = mode;
+    if (!m_open) {
+        return;
+    }
+    // core/deskhpsdr-src/receiver.c's rx_set_noise() defaults - not yet
+    // user-adjustable here (deskHPSDR exposes them via a separate Noise
+    // settings dialog, not the toolbar).
+    constexpr double kTau = 0.00001;
+    constexpr double kHang = 0.00001;
+    constexpr double kAdv = 0.00001;
+    constexpr double kThreshold = 4.95;
+    SetEXTANBTau(m_channel, kTau);
+    SetEXTANBHangtime(m_channel, kHang);
+    SetEXTANBAdvtime(m_channel, kAdv);
+    SetEXTANBThreshold(m_channel, kThreshold);
+    SetEXTANBRun(m_channel, mode == NoiseBlankerMode::Nb1 ? 1 : 0);
+    SetEXTNOBTau(m_channel, kTau);
+    SetEXTNOBHangtime(m_channel, kHang);
+    SetEXTNOBAdvtime(m_channel, kAdv);
+    SetEXTNOBThreshold(m_channel, kThreshold);
+    SetEXTNOBMode(m_channel, 0); // NB2 submode ("Zero") - not exposed yet
+    SetEXTNOBRun(m_channel, mode == NoiseBlankerMode::Nb2 ? 1 : 0);
+}
+
 void RxAudioChannel::feedSample(double i, double q) {
     if (!m_open) {
         return;
@@ -166,6 +230,19 @@ void RxAudioChannel::feedSample(double i, double q) {
 }
 
 void RxAudioChannel::processBlock() {
+    // Noise blanker runs in-place on the raw I/Q, before the demodulator -
+    // matches core/deskhpsdr-src/receiver.c's rx_full_buffer() ordering.
+    switch (m_nbMode) {
+    case NoiseBlankerMode::Nb1:
+        xanbEXT(m_channel, m_inBuffer.data(), m_inBuffer.data());
+        break;
+    case NoiseBlankerMode::Nb2:
+        xnobEXT(m_channel, m_inBuffer.data(), m_inBuffer.data());
+        break;
+    case NoiseBlankerMode::Off:
+        break;
+    }
+
     int error = 0;
     fexchange0(m_channel, m_inBuffer.data(), m_outBuffer.data(), &error);
 

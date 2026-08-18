@@ -25,6 +25,28 @@ enum class RxMode {
     WBFM = 12,
 };
 
+// Matches deskHPSDR's `enum _agc_enum` (core/deskhpsdr-src/agc.h) and
+// WDSP's SetRXAAGCMode() mode parameter (core/wdsp-2.00/wcpAGC.c) 1:1 -
+// there is no separate "auto" mode, these 5 (with their own fixed
+// attack/hang/decay presets, see RxAudioChannel::setAgcMode()) are the
+// complete set deskHPSDR itself offers.
+enum class AgcMode {
+    Off = 0,
+    Long = 1,
+    Slow = 2,
+    Medium = 3,
+    Fast = 4,
+};
+
+// Matches deskHPSDR's rx->nb (core/deskhpsdr-src/receiver.c/noise_menu.c):
+// "NONE"/"NB"/"NB2" - two different impulse-noise-blanker algorithms
+// (WDSP's EXTANB vs EXTNOB), mutually exclusive.
+enum class NoiseBlankerMode {
+    Off = 0,
+    Nb1 = 1,
+    Nb2 = 2,
+};
+
 // Qt wrapper around a WDSP RXA receive channel (core/wdsp-2.00), replacing
 // deskHPSDR's WDSP setup in core/deskhpsdr-src/receiver.c (OpenChannel +
 // per-block fexchange0 calls). Feed it normalized I/Q samples one at a
@@ -39,8 +61,10 @@ enum class RxMode {
 // the GUI; isOpen() flips to true and opened() fires once it's done.
 // feedSample() silently drops samples until then.
 //
-// Not yet implemented: noise blankers (create_anbEXT/create_nobEXT in the
-// original), meters, squelch, AGC tuning - WDSP defaults apply.
+// Not yet implemented: squelch, noise reduction (ANR/EMNR - separate from
+// the noise blanker above), NB2's alternate sub-modes, and user-adjustable
+// noise-blanker/AGC-slope parameters (deskHPSDR exposes those via a
+// separate settings dialog this project doesn't have yet).
 class RxAudioChannel : public QObject {
     Q_OBJECT
 
@@ -70,6 +94,22 @@ public:
     // (0 at/below -39.5dB, 1 above 0dB, pow(10, 0.05*dB) between) applied
     // via WDSP's RXA "panel" gain stage. No-op while closed/opening.
     void setAfGain(double dB);
+
+    // AGC mode + gain ("Top"), matching deskHPSDR's rx_set_agc()
+    // (core/deskhpsdr-src/receiver.c) exactly: each mode has its own
+    // fixed attack/hang/decay/hang-threshold preset (no separate "auto"
+    // mode - Off/Long/Slow/Medium/Fast is the complete set), while Top
+    // (the AGC gain ceiling, -20..120dB) applies independently of mode.
+    // No-op while closed/opening; setAgcTop() still remembers the value
+    // to apply once open.
+    void setAgcMode(AgcMode mode);
+    void setAgcTop(double dB);
+
+    // Impulse noise blanker, applied in-place on the raw I/Q before
+    // fexchange0() (matches deskHPSDR's rx_full_buffer() - NOT a one-time
+    // open-time setting like AGC, since it runs every block). No-op while
+    // closed/opening; feedSample()/processBlock() apply it once open.
+    void setNoiseBlanker(NoiseBlankerMode mode);
 
     // i, q normalized to [-1, 1] (e.g. a 24-bit ADC sample / 2^23). No-op
     // while the channel is still opening or closed.
@@ -104,6 +144,9 @@ private:
     std::vector<double> m_inBuffer;  // interleaved I/Q, 2*kBlockSize doubles
     std::vector<double> m_outBuffer; // interleaved L/R, 2*kBlockSize doubles
     int m_fillCount = 0;
+
+    double m_agcTopDb = 80.0; // core/deskhpsdr-src/receiver.c's rx->agc_gain default
+    NoiseBlankerMode m_nbMode = NoiseBlankerMode::Off;
 };
 
 #endif // QHPSDR_RXAUDIO_H

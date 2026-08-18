@@ -3,6 +3,8 @@
 
 #include <QWidget>
 
+#include "rxaudio.h"
+
 class QComboBox;
 class QLabel;
 class QSlider;
@@ -52,6 +54,19 @@ public:
     int zoomFactor() const;
     void setZoomFactor(int factor);
 
+    // AGC mode + gain ("Top") - see RxAudioChannel::setAgcMode()/
+    // setAgcTop() for the exact per-mode behavior this drives. No separate
+    // "auto" mode exists (deskHPSDR doesn't have one either) - Off/Long/
+    // Slow/Medium/Fast is the complete set.
+    AgcMode agcMode() const;
+    void setAgcMode(AgcMode mode);
+    double agcTopDb() const;
+    void setAgcTopDb(double dB);
+
+    // Impulse noise blanker - see RxAudioChannel::setNoiseBlanker().
+    NoiseBlankerMode noiseBlankerMode() const;
+    void setNoiseBlankerMode(NoiseBlankerMode mode);
+
 signals:
     // Band picked from the combo - just a frequency to tune to (band
     // center), not a full band-state change (filters/antenna aren't
@@ -62,6 +77,10 @@ signals:
     // range) - see RxAudioChannel::setAfGain().
     void afGainChanged(double dB);
 
+    void agcModeChanged(AgcMode mode);
+    void agcTopChanged(double dB);
+    void noiseBlankerChanged(NoiseBlankerMode mode);
+
 private:
     QComboBox *m_bandCombo = nullptr;
     QSlider *m_afGainSlider = nullptr;
@@ -69,6 +88,10 @@ private:
     QSlider *m_rfGainSlider = nullptr;
     QLabel *m_rfGainValueLabel = nullptr;
     QComboBox *m_zoomCombo = nullptr;
+    QComboBox *m_agcCombo = nullptr;
+    QSlider *m_agcTopSlider = nullptr;
+    QLabel *m_agcTopValueLabel = nullptr;
+    QComboBox *m_nbCombo = nullptr;
 };
 
 #endif // QHPSDR_TOOLBARWIDGET_H
