@@ -3,6 +3,14 @@
 #include <QPainter>
 #include <cstring>
 
+namespace {
+// Matches PanadapterWidget's kLeftMargin (src/panadapterwidget.cpp) so the
+// waterfall's columns line up under the panadapter's plot area instead of
+// its dB-axis gutter - without this the two were both fed the same
+// (possibly zoomed) spectrum data but drawn shifted ~46px apart.
+constexpr int kLeftMargin = 46;
+} // namespace
+
 WaterfallWidget::WaterfallWidget(QWidget *parent) : QWidget(parent) {
     setMinimumHeight(80);
 }
@@ -79,10 +87,11 @@ void WaterfallWidget::resizeEvent(QResizeEvent *event) {
 
 void WaterfallWidget::paintEvent(QPaintEvent *) {
     QPainter p(this);
+    p.fillRect(rect(), QColor(0x08, 0x10, 0x1a));
     if (m_image.isNull()) {
-        p.fillRect(rect(), Qt::black);
         return;
     }
     p.setRenderHint(QPainter::SmoothPixmapTransform, false);
-    p.drawImage(rect(), m_image, m_image.rect());
+    const QRect plot(kLeftMargin, 0, width() - kLeftMargin, height());
+    p.drawImage(plot, m_image, m_image.rect());
 }
