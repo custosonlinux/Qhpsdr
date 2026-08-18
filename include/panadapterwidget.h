@@ -21,6 +21,13 @@ public:
     void setSampleRateHz(double hz);
     void setDbRange(float minDb, float maxDb);
 
+    // Shades the currently selected demod passband (VfoPanel's filter
+    // combo, core/filtertable.h's FilterEntry::low/high) around the tuned
+    // frequency, like deskHPSDR's rx_panadapter.c filter overlay. lowHz/
+    // highHz are offsets from the tuned frequency (can be negative), not
+    // absolute - e.g. LSB's "2.9k" is roughly -3050..-150.
+    void setPassband(double lowHz, double highHz);
+
 signals:
     // Emitted on a left click inside the plot area, converted from pixel
     // position to frequency using the same loHz/hiHz mapping paintEvent()
@@ -37,6 +44,8 @@ private:
     double m_sampleRateHz = 48000.0;
     float m_minDb = -140.0f;
     float m_maxDb = -20.0f;
+    double m_passbandLowHz = 0.0;
+    double m_passbandHighHz = 0.0;
 };
 
 #endif // QHPSDR_PANADAPTERWIDGET_H

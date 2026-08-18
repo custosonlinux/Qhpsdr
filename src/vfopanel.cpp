@@ -343,6 +343,15 @@ void VfoPanel::repopulateFilterCombo() {
 
 int VfoPanel::attenuationDb() const { return m_attenSpin ? m_attenSpin->value() : 0; }
 
+FilterEntry VfoPanel::currentFilter() const {
+    const auto filters = filtersForMode(m_mode);
+    const int idx = m_filterCombo->currentIndex();
+    if (idx >= 0 && idx < filters.size()) {
+        return filters[idx];
+    }
+    return FilterEntry{};
+}
+
 void VfoPanel::setSignalDbm(double dbm) {
     // core/deskhpsdr-src/meter.c: S9 = -73dBm (HF), 6dB per S-unit below
     // S9, direct dB-over-S9 above it (e.g. "S9+20").

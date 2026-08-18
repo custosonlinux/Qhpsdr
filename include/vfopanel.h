@@ -3,6 +3,7 @@
 
 #include <QWidget>
 
+#include "filtertable.h"
 #include "rxaudio.h"
 
 class QLineEdit;
@@ -34,6 +35,13 @@ public:
     // and selects that mode's default filter (see core/filtertable.h).
     void setRxMode(RxMode mode);
     RxMode rxMode() const { return m_mode; }
+
+    // The currently-selected filter preset (name plus low/high offsets
+    // from the tuned frequency) - for syncing things like the panadapter's
+    // passband shading (PanadapterWidget::setPassband()) to whatever's
+    // actually selected, not just to filterSelected()'s user-driven
+    // signal (which doesn't fire for mode-change-driven default changes).
+    FilterEntry currentFilter() const;
 
     // WDSP's own S-meter reading in dBm (RxAudioChannel::meterUpdated()).
     // Converted to S-units the same way as deskHPSDR's meter.c: S9 =

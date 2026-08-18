@@ -56,6 +56,12 @@ void PanadapterWidget::setDbRange(float minDb, float maxDb) {
     update();
 }
 
+void PanadapterWidget::setPassband(double lowHz, double highHz) {
+    m_passbandLowHz = lowHz;
+    m_passbandHighHz = highHz;
+    update();
+}
+
 void PanadapterWidget::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, false);
@@ -102,6 +108,22 @@ void PanadapterWidget::paintEvent(QPaintEvent *) {
         p.setPen(QColor(0x6f, 0xc7, 0xd8));
         p.drawText(QRect(x - 40, 1, 80, kTopMargin - 2), Qt::AlignHCenter | Qt::AlignVCenter,
                    QString::number(f / 1e6, 'f', 3));
+    }
+
+    // --- selected passband shading ---------------------------------------
+    if (m_passbandHighHz > m_passbandLowHz) {
+        const double passLoHz = m_centerHz + m_passbandLowHz;
+        const double passHiHz = m_centerHz + m_passbandHighHz;
+        const double tLo = (passLoHz - loHz) / (hiHz - loHz);
+        const double tHi = (passHiHz - loHz) / (hiHz - loHz);
+        const int xLo = plot.left() + int(qBound(0.0, tLo, 1.0) * plot.width());
+        const int xHi = plot.left() + int(qBound(0.0, tHi, 1.0) * plot.width());
+        if (xHi > xLo) {
+            p.fillRect(QRect(xLo, plot.top(), xHi - xLo, plot.height()), QColor(0x6f, 0xc7, 0xd8, 40));
+            p.setPen(QPen(QColor(0x6f, 0xc7, 0xd8, 130), 1));
+            p.drawLine(xLo, plot.top(), xLo, plot.bottom());
+            p.drawLine(xHi, plot.top(), xHi, plot.bottom());
+        }
     }
 
     // --- tuned-frequency cursor -----------------------------------------

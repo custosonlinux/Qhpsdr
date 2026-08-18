@@ -73,6 +73,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             QMetaObject::invokeMethod(
                 m_rxAudio, [this, mode]() { m_rxAudio->setMode(mode); }, Qt::QueuedConnection);
         }
+        // repopulateFilterCombo() (called from setRxMode(), which already
+        // ran by the time this signal fires) picks the new mode's default
+        // filter without emitting filterSelected() - sync the panadapter's
+        // passband shading explicitly here instead of relying on that
+        // signal for this particular case.
+        const FilterEntry f = m_vfoPanel->currentFilter();
+        m_panadapter->setPassband(f.low, f.high);
     });
     connect(m_vfoPanel, &VfoPanel::filterSelected, this, [this](double lowHz, double highHz) {
         if (m_rxAudio) {
@@ -80,6 +87,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 m_rxAudio, [this, lowHz, highHz]() { m_rxAudio->setPassband(lowHz, highHz); },
                 Qt::QueuedConnection);
         }
+        m_panadapter->setPassband(lowHz, highHz);
     });
     connect(m_vfoPanel, &VfoPanel::attenuationChanged, this, [this](int db) {
         if (m_connection) {
@@ -99,6 +107,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             QMetaObject::invokeMethod(
                 m_rxAudio, [this, mode]() { m_rxAudio->setMode(mode); }, Qt::QueuedConnection);
         }
+        const FilterEntry f = m_vfoPanel->currentFilter();
+        m_panadapter->setPassband(f.low, f.high);
     });
     connect(m_toolbar, &ToolbarWidget::afGainChanged, this, [this](double dB) {
         if (m_rxAudio) {
@@ -334,6 +344,10 @@ void MainWindow::showDiscoveryDialog() {
         Qt::QueuedConnection);
     m_vfoPanel->setConnected(true);
     m_toolbar->setConnected(true);
+    {
+        const FilterEntry f = m_vfoPanel->currentFilter();
+        m_panadapter->setPassband(f.low, f.high);
+    }
     m_disconnectAction->setEnabled(true);
 }
 
@@ -398,6 +412,7 @@ void MainWindow::disconnectFromRadio() {
     m_vfoPanel->setConnected(false);
     m_toolbar->setConnected(false);
     m_vfoPanel->setSignalDbm(-140.0);
+    m_panadapter->setPassband(0.0, 0.0);
     m_disconnectAction->setEnabled(false);
     statusBar()->showMessage(tr("Disconnected."));
 }
