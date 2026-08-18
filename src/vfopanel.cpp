@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QFont>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -138,40 +139,46 @@ private:
 
 namespace {
 // Amber-on-black LCD look, styled after deskHPSDR's VFO "A:" frequency
-// readout (core/deskhpsdr-src/vfo.c's cairo-drawn LCD panel).
-const char *const kFreqEditStyle =
-    "QLineEdit {"
+// readout (core/deskhpsdr-src/vfo.c's cairo-drawn LCD panel). The gradient/
+// border live on the m_freqBox container (kFreqBoxStyle) rather than on
+// m_freqEdit itself, since the info summary (m_infoLabel) shares the same
+// box, left of the digits - both children stay transparent so the
+// container's single amber field shows through both.
+const char *const kFreqBoxStyle =
+    "QWidget#freqBox {"
     "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
     "    stop:0 #e08a1e, stop:1 #b6690f);"
-    "  color: #14100a;"
     "  border: 1px solid #6b4108;"
-    "  border-top-left-radius: 0px;"
-    "  border-top-right-radius: 0px;"
-    "  border-bottom-left-radius: 4px;"
-    "  border-bottom-right-radius: 4px;"
+    "  border-radius: 4px;"
+    "}"
+    "QWidget#freqBox:disabled {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 #4a4741, stop:1 #38352f);"
+    "  border-color: #29271f;"
+    "}";
+
+const char *const kFreqEditStyle =
+    "QLineEdit {"
+    "  background: transparent;"
+    "  color: #14100a;"
+    "  border: none;"
     "  padding: 2px 10px;"
     "  selection-background-color: #ffe680;"
     "  selection-color: #14100a;"
     "}"
-    "QLineEdit:disabled {"
-    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-    "    stop:0 #4a4741, stop:1 #38352f);"
-    "  color: #77716a;"
-    "  border-color: #29271f;"
-    "}";
+    "QLineEdit:disabled { color: #77716a; }";
 
-// Compact summary strip sitting right above the frequency LCD - same
-// amber family, darker/smaller so the big digits stay the focal point.
+// Same amber-LCD family and color as the frequency digits (kFreqEditStyle)
+// but smaller/plain, so it reads as "same field, same design" while the
+// digits stay the focal point.
 const char *const kInfoLabelStyle =
     "QLabel {"
-    "  background: #241a0c;"
-    "  color: #e0a84a;"
-    "  border: 1px solid #6b4108;"
-    "  border-bottom: none;"
-    "  border-top-left-radius: 4px;"
-    "  border-top-right-radius: 4px;"
-    "  padding: 1px 10px;"
-    "}";
+    "  background: transparent;"
+    "  color: #14100a;"
+    "  border: none;"
+    "  padding: 2px 0px 2px 10px;"
+    "}"
+    "QLabel:disabled { color: #77716a; }";
 
 const char *const kDarkLabelStyle = "color: #7fb6c4;";
 const char *const kComboStyle =
@@ -196,24 +203,40 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     pal.setColor(QPalette::Window, QColor(0x0a, 0x0e, 0x13));
     setPalette(pal);
 
-    m_infoLabel = new QLabel(this);
-    m_infoLabel->setStyleSheet(kInfoLabelStyle);
-    QFont infoFont = m_infoLabel->font();
-    infoFont.setPointSizeF(infoFont.pointSizeF() * 0.9);
-    infoFont.setBold(true);
-    infoFont.setLetterSpacing(QFont::PercentageSpacing, 105);
-    m_infoLabel->setFont(infoFont);
-
-    m_freqEdit = new FrequencyLineEdit(this, this);
-    m_freqEdit->setValidator(new QIntValidator(0, 999999999, m_freqEdit));
     QFont freqFont("monospace");
     freqFont.setStyleHint(QFont::Monospace);
     freqFont.setPointSize(freqFont.pointSize() + 16);
     freqFont.setBold(true);
+
+    // A single amber LCD field: m_infoLabel (band/mode/filter/NB summary,
+    // left-aligned) and m_freqEdit (the big digits, right-aligned) share
+    // one box/gradient/border (kFreqBoxStyle) instead of two visually
+    // separate strips - both children render transparent, same monospace
+    // family as the digits, just smaller for the summary text.
+    auto *freqBox = new QWidget(this);
+    freqBox->setObjectName(QStringLiteral("freqBox"));
+    freqBox->setStyleSheet(kFreqBoxStyle);
+
+    m_infoLabel = new QLabel(freqBox);
+    m_infoLabel->setStyleSheet(kInfoLabelStyle);
+    QFont infoFont = freqFont;
+    infoFont.setPointSizeF(freqFont.pointSizeF() * 0.45);
+    infoFont.setLetterSpacing(QFont::PercentageSpacing, 105);
+    m_infoLabel->setFont(infoFont);
+
+    m_freqEdit = new FrequencyLineEdit(this, freqBox);
+    m_freqEdit->setValidator(new QIntValidator(0, 999999999, m_freqEdit));
     m_freqEdit->setFont(freqFont);
     m_freqEdit->setAlignment(Qt::AlignRight);
     m_freqEdit->setStyleSheet(kFreqEditStyle);
     connect(m_freqEdit, &QLineEdit::editingFinished, this, &VfoPanel::onFrequencyEditingFinished);
+
+    auto *freqBoxLayout = new QHBoxLayout(freqBox);
+    freqBoxLayout->setContentsMargins(0, 0, 0, 0);
+    freqBoxLayout->setSpacing(0);
+    freqBoxLayout->addWidget(m_infoLabel, 0, Qt::AlignVCenter | Qt::AlignLeft);
+    freqBoxLayout->addStretch();
+    freqBoxLayout->addWidget(m_freqEdit, 0, Qt::AlignVCenter | Qt::AlignRight);
 
     auto *hzLabel = new QLabel(tr("Hz"), this);
     hzLabel->setStyleSheet(kDarkLabelStyle);
@@ -276,10 +299,9 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
 
     auto *grid = new QGridLayout;
     grid->setVerticalSpacing(0);
-    grid->addWidget(m_infoLabel, 0, 0, 1, 4);
-    grid->addWidget(m_freqEdit, 1, 0, 1, 3);
-    grid->addWidget(hzLabel, 1, 3);
-    grid->setRowMinimumHeight(2, 6); // restore normal spacing below the attached info/freq block
+    grid->addWidget(freqBox, 0, 0, 1, 3);
+    grid->addWidget(hzLabel, 0, 3);
+    grid->setRowMinimumHeight(1, 6); // spacing below the LCD field
     grid->addWidget(modeLabel, 3, 0);
     grid->addWidget(m_modeCombo, 3, 1);
     grid->addWidget(stepLabel, 3, 2);
@@ -441,6 +463,10 @@ void VfoPanel::updateInfoLabel() {
 }
 
 void VfoPanel::setConnected(bool connected) {
+    // m_freqEdit's parent is freqBox (the shared amber LCD field) - disable
+    // it too so kFreqBoxStyle's QWidget#freqBox:disabled rule (grey
+    // gradient) applies, not just the QLineEdit's own disabled text color.
+    m_freqEdit->parentWidget()->setEnabled(connected);
     m_freqEdit->setEnabled(connected);
     m_modeCombo->setEnabled(connected);
     m_stepCombo->setEnabled(connected);
