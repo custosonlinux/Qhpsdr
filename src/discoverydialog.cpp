@@ -1,6 +1,8 @@
 #include "discoverydialog.h"
 
+#include <QComboBox>
 #include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QHostAddress>
@@ -8,7 +10,10 @@
 #include <QIntValidator>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
+#include <QSettings>
+#include <QSignalBlocker>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -81,6 +86,53 @@ DiscoveryDialog::DiscoveryDialog(QWidget *parent) : QDialog(parent) {
 
     m_statusLabel = new QLabel(tr("Press \"Discover\" to search for devices."), this);
 
+    // Favorites: saved "Connect Directly" addresses so a VPN-only radio
+    // (see connectDirectly()'s tooltip) doesn't need its IP retyped every
+    // time. Picking one from the dropdown fills the host/port fields and
+    // connects immediately - a single click, as requested.
+    m_favoritesCombo = new QComboBox(this);
+    m_favoritesCombo->setToolTip(tr("Saved addresses - pick one to connect immediately."));
+    connect(m_favoritesCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+        if (index <= 0 || index > m_favorites.size()) {
+            return;
+        }
+        const DeviceFavorite &fav = m_favorites.at(index - 1);
+        m_hostEdit->setText(fav.host);
+        m_portEdit->setText(QString::number(fav.port));
+        connectDirectly();
+    });
+
+    m_saveFavoriteButton = new QPushButton(tr("Save As Favorite..."), this);
+    m_saveFavoriteButton->setToolTip(tr("Save the address above as a favorite for quick reconnecting."));
+    connect(m_saveFavoriteButton, &QPushButton::clicked, this, [this]() {
+        const QString host = m_hostEdit->text().trimmed();
+        if (host.isEmpty()) {
+            m_statusLabel->setText(tr("Enter an IP address or hostname first."));
+            return;
+        }
+        QString name, description;
+        if (!promptFavoriteDetails(QString(), QString(), name, description)) {
+            return;
+        }
+        DeviceFavorite fav;
+        fav.name = name;
+        fav.description = description;
+        fav.host = host;
+        fav.port = quint16(m_portEdit->text().toUInt());
+        m_favorites.append(fav);
+        saveFavorites();
+        refreshFavoritesCombo();
+    });
+
+    m_manageFavoritesButton = new QPushButton(tr("Manage..."), this);
+    connect(m_manageFavoritesButton, &QPushButton::clicked, this, &DiscoveryDialog::manageFavorites);
+
+    auto *favoritesLayout = new QHBoxLayout;
+    favoritesLayout->addWidget(new QLabel(tr("Favorites:"), this));
+    favoritesLayout->addWidget(m_favoritesCombo, /*stretch=*/1);
+    favoritesLayout->addWidget(m_saveFavoriteButton);
+    favoritesLayout->addWidget(m_manageFavoritesButton);
+
     auto *hostLayout = new QHBoxLayout;
     hostLayout->addWidget(m_hostEdit);
     hostLayout->addWidget(m_portEdit);
@@ -94,6 +146,7 @@ DiscoveryDialog::DiscoveryDialog(QWidget *parent) : QDialog(parent) {
     buttonLayout->addWidget(cancelButton);
 
     auto *layout = new QVBoxLayout(this);
+    layout->addLayout(favoritesLayout);
     layout->addLayout(hostLayout);
     layout->addWidget(m_table);
     layout->addLayout(buttonLayout);
@@ -101,6 +154,9 @@ DiscoveryDialog::DiscoveryDialog(QWidget *parent) : QDialog(parent) {
     connect(m_table, &QTableWidget::itemSelectionChanged, this, [this]() {
         m_connectButton->setEnabled(m_table->currentRow() >= 0);
     });
+
+    loadFavorites();
+    refreshFavoritesCombo();
 
     startDiscovery();
 }
@@ -170,4 +226,116 @@ void DiscoveryDialog::addRow(const DiscoveredDevice &device) {
     m_table->setItem(row, 3, new QTableWidgetItem(macToString(device.macAddress)));
     m_table->setItem(row, 4, new QTableWidgetItem(device.status == STATE_SENDING ? tr("In use") : tr("Available")));
     m_rowDevices.append(device);
+}
+
+void DiscoveryDialog::loadFavorites() {
+    QSettings settings;
+    const int count = settings.beginReadArray(QStringLiteral("favorites"));
+    m_favorites.clear();
+    m_favorites.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        settings.setArrayIndex(i);
+        DeviceFavorite fav;
+        fav.name = settings.value(QStringLiteral("name")).toString();
+        fav.description = settings.value(QStringLiteral("description")).toString();
+        fav.host = settings.value(QStringLiteral("host")).toString();
+        fav.port = quint16(settings.value(QStringLiteral("port"), 1024).toUInt());
+        m_favorites.append(fav);
+    }
+    settings.endArray();
+}
+
+void DiscoveryDialog::saveFavorites() {
+    QSettings settings;
+    settings.beginWriteArray(QStringLiteral("favorites"));
+    for (int i = 0; i < m_favorites.size(); ++i) {
+        settings.setArrayIndex(i);
+        settings.setValue(QStringLiteral("name"), m_favorites.at(i).name);
+        settings.setValue(QStringLiteral("description"), m_favorites.at(i).description);
+        settings.setValue(QStringLiteral("host"), m_favorites.at(i).host);
+        settings.setValue(QStringLiteral("port"), m_favorites.at(i).port);
+    }
+    settings.endArray();
+}
+
+void DiscoveryDialog::refreshFavoritesCombo() {
+    const QSignalBlocker blocker(m_favoritesCombo);
+    m_favoritesCombo->clear();
+    m_favoritesCombo->addItem(tr("(choose a favorite)"));
+    for (const auto &fav : m_favorites) {
+        m_favoritesCombo->addItem(fav.description.isEmpty() ? fav.name
+                                                              : tr("%1 - %2").arg(fav.name, fav.description));
+    }
+    m_favoritesCombo->setCurrentIndex(0);
+}
+
+bool DiscoveryDialog::promptFavoriteDetails(const QString &initialName, const QString &initialDescription,
+                                             QString &nameOut, QString &descriptionOut) {
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Save Favorite"));
+    auto *nameEdit = new QLineEdit(initialName, &dlg);
+    nameEdit->setPlaceholderText(tr("e.g. Home Shack"));
+    auto *descriptionEdit = new QLineEdit(initialDescription, &dlg);
+    descriptionEdit->setPlaceholderText(tr("e.g. Hermes via VPN"));
+
+    auto *form = new QFormLayout;
+    form->addRow(tr("Name:"), nameEdit);
+    form->addRow(tr("Description:"), descriptionEdit);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    auto *layout = new QVBoxLayout(&dlg);
+    layout->addLayout(form);
+    layout->addWidget(buttons);
+
+    nameEdit->setFocus();
+    if (dlg.exec() != QDialog::Accepted) {
+        return false;
+    }
+    nameOut = nameEdit->text().trimmed();
+    descriptionOut = descriptionEdit->text().trimmed();
+    return !nameOut.isEmpty();
+}
+
+void DiscoveryDialog::manageFavorites() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Manage Favorites"));
+    dlg.resize(420, 280);
+
+    auto *list = new QListWidget(&dlg);
+    for (const auto &fav : m_favorites) {
+        list->addItem(tr("%1 - %2 (%3:%4)").arg(fav.name, fav.description, fav.host).arg(fav.port));
+    }
+
+    auto *removeButton = new QPushButton(tr("Remove"), &dlg);
+    removeButton->setEnabled(false);
+    connect(list, &QListWidget::currentRowChanged, &dlg, [removeButton](int row) { removeButton->setEnabled(row >= 0); });
+    connect(removeButton, &QPushButton::clicked, &dlg, [this, list, removeButton]() {
+        const int row = list->currentRow();
+        if (row < 0 || row >= m_favorites.size()) {
+            return;
+        }
+        m_favorites.removeAt(row);
+        delete list->takeItem(row);
+        removeButton->setEnabled(list->currentRow() >= 0);
+    });
+
+    auto *closeButton = new QPushButton(tr("Close"), &dlg);
+    connect(closeButton, &QPushButton::clicked, &dlg, &QDialog::accept);
+
+    auto *buttonLayout = new QHBoxLayout;
+    buttonLayout->addWidget(removeButton);
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(closeButton);
+
+    auto *layout = new QVBoxLayout(&dlg);
+    layout->addWidget(list);
+    layout->addLayout(buttonLayout);
+
+    dlg.exec();
+
+    saveFavorites();
+    refreshFavoritesCombo();
 }
