@@ -235,6 +235,14 @@ void MainWindow::showDiscoveryDialog() {
     m_rxAudio->moveToThread(m_workerThread);
     connect(m_rxAudio, &RxAudioChannel::opened, this, [this]() {
         statusBar()->showMessage(tr("Audio engine ready."));
+        // finishOpen() applies a hardcoded AM baseline before m_open flips
+        // true (see rxaudio.cpp) - re-apply the VFO panel's actual mode
+        // now that the channel is guaranteed open, rather than racing it
+        // right after open() like this used to (setMode() silently no-ops
+        // while m_open is still false, so it could lose to that baseline
+        // depending on how long OpenChannel()/FFTW planning took).
+        QMetaObject::invokeMethod(
+            m_rxAudio, [this]() { m_rxAudio->setMode(m_vfoPanel->rxMode()); }, Qt::QueuedConnection);
     });
     connect(m_rxAudio, &RxAudioChannel::buildingWisdom, this, [this]() {
         statusBar()->showMessage(
@@ -306,8 +314,6 @@ void MainWindow::showDiscoveryDialog() {
     QMetaObject::invokeMethod(
         m_connection, [this, device]() { m_connection->connectToDevice(device, m_vfoPanel->frequencyHz()); },
         Qt::QueuedConnection);
-    QMetaObject::invokeMethod(
-        m_rxAudio, [this]() { m_rxAudio->setMode(m_vfoPanel->rxMode()); }, Qt::QueuedConnection);
     m_vfoPanel->setConnected(true);
     m_toolbar->setConnected(true);
     m_disconnectAction->setEnabled(true);
