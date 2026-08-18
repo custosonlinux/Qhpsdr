@@ -84,6 +84,13 @@ public:
     int zoomFactor() const;
     void setZoomFactor(int factor);
 
+    // Panadapter/waterfall repaint rate - see MainWindow's m_repaintTimer.
+    // Decoupled from the ~23/s rate spectrum frames actually arrive at;
+    // lower settings trade update smoothness for less GUI-thread paint
+    // cost (useful on slower machines or very large window sizes).
+    int fps() const;
+    void setFps(int fps);
+
     // AGC mode + gain ("Top") - see RxAudioChannel::setAgcMode()/
     // setAgcTop() for the exact per-mode behavior this drives. No separate
     // "auto" mode exists (deskHPSDR doesn't have one either) - Off/Long/
@@ -122,6 +129,9 @@ signals:
     // no such entry exists yet.
     void bandSelected(int bandIndex, double centerFrequencyHz);
 
+    // Panadapter/waterfall repaint rate in frames per second - see fps().
+    void fpsChanged(int fps);
+
     // AF gain in dB, -40..0 (core/deskhpsdr-src/sliders.c's af_gain_scale
     // range) - see RxAudioChannel::setAfGain().
     void afGainChanged(double dB);
@@ -141,6 +151,7 @@ private:
     QSlider *m_rfGainSlider = nullptr;
     QLabel *m_rfGainValueLabel = nullptr;
     QComboBox *m_zoomCombo = nullptr;
+    QComboBox *m_fpsCombo = nullptr;
     QComboBox *m_agcCombo = nullptr;
     QSlider *m_agcTopSlider = nullptr;
     QLabel *m_agcTopValueLabel = nullptr;

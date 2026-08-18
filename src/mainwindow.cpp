@@ -202,12 +202,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     // Painting on every incoming spectrum frame (~23/s) made each frame's
     // handler expensive enough (grid+trace redraw, waterfall image scroll,
-    // widget repaint) to noticeably starve the GUI event loop. A fixed
-    // 20 fps repaint timer bounds that cost regardless of how fast frames
-    // actually arrive.
+    // widget repaint) to noticeably starve the GUI event loop. A repaint
+    // timer, rate user-adjustable via the toolbar's FPS combo (default
+    // 20fps), bounds that cost regardless of how fast frames actually
+    // arrive.
     m_repaintTimer = new QTimer(this);
-    m_repaintTimer->setInterval(50);
+    m_repaintTimer->setInterval(1000 / m_toolbar->fps());
     connect(m_repaintTimer, &QTimer::timeout, this, &MainWindow::repaintDisplays);
+    connect(m_toolbar, &ToolbarWidget::fpsChanged, this,
+            [this](int fps) { m_repaintTimer->setInterval(1000 / qMax(1, fps)); });
     m_repaintTimer->start();
 
     m_workerThread = new QThread(this);
@@ -299,6 +302,7 @@ void MainWindow::saveSettings() {
     settings.setValue(QStringLiteral("afGainDb"), m_toolbar->afGainDb());
     settings.setValue(QStringLiteral("rfGainDb"), m_toolbar->rfGainDb());
     settings.setValue(QStringLiteral("zoomFactor"), m_toolbar->zoomFactor());
+    settings.setValue(QStringLiteral("fps"), m_toolbar->fps());
     settings.setValue(QStringLiteral("agcMode"), int(m_toolbar->agcMode()));
     settings.setValue(QStringLiteral("agcTopDb"), m_toolbar->agcTopDb());
     settings.setValue(QStringLiteral("noiseBlankerMode"), int(m_toolbar->noiseBlankerMode()));
@@ -337,6 +341,7 @@ void MainWindow::loadSettings() {
     m_toolbar->setAfGainDb(settings.value(QStringLiteral("afGainDb")).toDouble());
     m_toolbar->setRfGainDb(settings.value(QStringLiteral("rfGainDb")).toDouble());
     m_toolbar->setZoomFactor(settings.value(QStringLiteral("zoomFactor"), 1).toInt());
+    m_toolbar->setFps(settings.value(QStringLiteral("fps"), 20).toInt());
     m_toolbar->setAgcMode(AgcMode(settings.value(QStringLiteral("agcMode"), int(AgcMode::Medium)).toInt()));
     m_toolbar->setAgcTopDb(settings.value(QStringLiteral("agcTopDb"), 80.0).toDouble());
     m_toolbar->setNoiseBlankerMode(

@@ -179,11 +179,15 @@ void PanadapterWidget::paintEvent(QPaintEvent *) {
         topLine[px] = QPointF(plot.left() + px, yFor(m_spectrum[bin]));
     }
 
+    // Same green -> yellow -> red palette as the S-meter (VfoPanel's
+    // QProgressBar::chunk gradient, #2f8f3a/#d8c22a/#c23b2a), so strong
+    // peaks read the same way in both places. plot.top() is the highest
+    // displayed dB (loudest signals), plot.bottom() the noise floor.
     if (m_fillGradientHeight != plot.height()) {
         m_fillGradient = QLinearGradient(0, plot.top(), 0, plot.bottom());
-        m_fillGradient.setColorAt(0.0, QColor(0xd6, 0xe0, 0x40, 235));
-        m_fillGradient.setColorAt(0.55, QColor(0x7c, 0xc4, 0x3a, 220));
-        m_fillGradient.setColorAt(1.0, QColor(0x1a, 0x3a, 0x2a, 60));
+        m_fillGradient.setColorAt(0.0, QColor(0xc2, 0x3b, 0x2a, 235));
+        m_fillGradient.setColorAt(0.35, QColor(0xd8, 0xc2, 0x2a, 220));
+        m_fillGradient.setColorAt(1.0, QColor(0x2f, 0x8f, 0x3a, 90));
         m_fillGradientHeight = plot.height();
     }
     QPainterPath fillPath;

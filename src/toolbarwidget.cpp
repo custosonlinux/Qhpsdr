@@ -123,6 +123,19 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     }
     m_zoomCombo->setToolTip(tr("Panadapter/waterfall zoom, centered on the tuned frequency."));
 
+    auto *fpsLabel = new QLabel(tr("FPS"), this);
+    fpsLabel->setStyleSheet(kDarkLabelStyle);
+    m_fpsCombo = new QComboBox(this);
+    m_fpsCombo->setStyleSheet(kComboStyle);
+    for (int f : {2, 5, 10, 15, 20, 30, 60}) {
+        m_fpsCombo->addItem(tr("%1").arg(f), f);
+    }
+    m_fpsCombo->setCurrentIndex(4); // 20 fps, matches the previous fixed rate
+    m_fpsCombo->setToolTip(tr("Panadapter/waterfall repaint rate. Lower this if the display feels "
+                               "sluggish or is eating more CPU than you want - it doesn't affect audio."));
+    connect(m_fpsCombo, QOverload<int>::of(&QComboBox::activated), this,
+            [this](int index) { emit fpsChanged(m_fpsCombo->itemData(index).toInt()); });
+
     auto *agcLabel = new QLabel(tr("AGC"), this);
     agcLabel->setStyleSheet(kDarkLabelStyle);
     m_agcCombo = new QComboBox(this);
@@ -220,6 +233,9 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     layout->addWidget(zoomLabel);
     layout->addWidget(m_zoomCombo);
     layout->addSpacing(16);
+    layout->addWidget(fpsLabel);
+    layout->addWidget(m_fpsCombo);
+    layout->addSpacing(16);
     layout->addWidget(agcLabel);
     layout->addWidget(m_agcCombo);
     layout->addWidget(m_agcTopSlider, /*stretch=*/1);
@@ -267,6 +283,20 @@ void ToolbarWidget::setZoomFactor(int factor) {
     for (int i = 0; i < m_zoomCombo->count(); ++i) {
         if (m_zoomCombo->itemData(i).toInt() == factor) {
             m_zoomCombo->setCurrentIndex(i);
+            return;
+        }
+    }
+}
+
+int ToolbarWidget::fps() const { return m_fpsCombo ? m_fpsCombo->currentData().toInt() : 20; }
+
+void ToolbarWidget::setFps(int fps) {
+    if (!m_fpsCombo) {
+        return;
+    }
+    for (int i = 0; i < m_fpsCombo->count(); ++i) {
+        if (m_fpsCombo->itemData(i).toInt() == fps) {
+            m_fpsCombo->setCurrentIndex(i);
             return;
         }
     }
