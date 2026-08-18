@@ -31,7 +31,7 @@ qint32 get24BESigned(const uchar *p) {
 
 } // namespace
 
-OldProtocolConnection::OldProtocolConnection(QObject *parent) : QObject(parent) {
+OldProtocolConnection::OldProtocolConnection(QObject *parent) : RadioConnection(parent) {
     m_socket = new QUdpSocket(this);
     connect(m_socket, &QUdpSocket::readyRead, this, &OldProtocolConnection::readPendingDatagrams);
 

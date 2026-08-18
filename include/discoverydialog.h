@@ -23,6 +23,10 @@ struct DeviceFavorite {
     QString description;
     QString host;
     quint16 port = 1024;
+    // ORIGINAL_PROTOCOL or NEW_PROTOCOL (discovered.h) - which connection
+    // class to use, since a direct-by-IP connect has no discovery reply to
+    // infer this from.
+    int protocol = ORIGINAL_PROTOCOL;
 };
 
 // Qt replacement for deskHPSDR's GTK discovery dialog (core/deskhpsdr-src/discovery.c).
@@ -62,6 +66,7 @@ private:
     QPushButton *m_connectDirectButton = nullptr;
     QLineEdit *m_hostEdit = nullptr;
     QLineEdit *m_portEdit = nullptr;
+    QComboBox *m_protocolCombo = nullptr;
     QLabel *m_statusLabel = nullptr;
     QComboBox *m_favoritesCombo = nullptr;
     QPushButton *m_saveFavoriteButton = nullptr;

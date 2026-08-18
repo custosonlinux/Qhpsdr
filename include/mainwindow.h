@@ -6,7 +6,7 @@
 #include <QVector>
 
 struct DiscoveredDevice;
-class OldProtocolConnection;
+class RadioConnection;
 class RxAudioChannel;
 class SpectrumAnalyzer;
 class VfoPanel;
@@ -73,16 +73,18 @@ private:
     // exactly where it was left, not just the band's center frequency.
     void updateBandStack();
 
-    // OldProtocolConnection + RxAudioChannel (network I/O and WDSP audio
-    // demod) live on m_workerThread; SpectrumAnalyzer (the panadapter's
-    // FFT) lives on its own m_spectrumThread. They're independent - both
-    // just consume the same raw I/Q stream, neither depends on the
-    // other's output - so they get separate threads/cores rather than
-    // sharing one, instead of leaving cores idle. Only thin signal
-    // emissions cross back to the GUI thread for actual widget updates.
+    // m_connection (OldProtocolConnection or NewProtocolConnection,
+    // depending on the connected device's protocol - see connectToDevice())
+    // + RxAudioChannel (network I/O and WDSP audio demod) live on
+    // m_workerThread; SpectrumAnalyzer (the panadapter's FFT) lives on its
+    // own m_spectrumThread. They're independent - both just consume the
+    // same raw I/Q stream, neither depends on the other's output - so they
+    // get separate threads/cores rather than sharing one, instead of
+    // leaving cores idle. Only thin signal emissions cross back to the GUI
+    // thread for actual widget updates.
     QThread *m_workerThread = nullptr;
     QThread *m_spectrumThread = nullptr;
-    OldProtocolConnection *m_connection = nullptr;
+    RadioConnection *m_connection = nullptr;
     RxAudioChannel *m_rxAudio = nullptr;
     SpectrumAnalyzer *m_spectrum = nullptr;
     QAudioSink *m_audioSink = nullptr;

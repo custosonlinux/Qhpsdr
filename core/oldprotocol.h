@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include "discovered.h"
+#include "radioconnection.h"
 
 class QUdpSocket;
 class QTimer;
@@ -29,34 +30,25 @@ class QTimer;
 // audio, antenna/filter board registers, more than one receiver, TCP
 // transport. Those are additional C&C registers in the same framing and
 // can be added incrementally without changing the wire handling done here.
-class OldProtocolConnection : public QObject {
+class OldProtocolConnection : public RadioConnection {
     Q_OBJECT
 
 public:
     explicit OldProtocolConnection(QObject *parent = nullptr);
 
-    void connectToDevice(const DiscoveredDevice &device, double rxFrequencyHz = 7100000.0);
-    void disconnectFromDevice();
-    bool isConnected() const { return m_connected; }
+    void connectToDevice(const DiscoveredDevice &device, double rxFrequencyHz = 7100000.0) override;
+    void disconnectFromDevice() override;
+    bool isConnected() const override { return m_connected; }
 
-    void setRxFrequency(double hz) { m_rxFrequencyHz = hz; }
-    double rxFrequency() const { return m_rxFrequencyHz; }
+    void setRxFrequency(double hz) override { m_rxFrequencyHz = hz; }
+    double rxFrequency() const override { return m_rxFrequencyHz; }
 
     // Standard HPSDR step attenuator on ADC0 (core/deskhpsdr-src/
     // old_protocol.c: output_buffer[C4] = 0x20 | (adc[0].attenuation &
     // 0x1F), sent as the C0=0x14 register). 0-31 dB. Not applicable to
     // HermesLite2's different gain scheme, which isn't implemented here.
-    void setAttenuation(int db) { m_attenuationDb = qBound(0, db, 31); }
-    int attenuation() const { return m_attenuationDb; }
-
-signals:
-    void connected();
-    void disconnected();
-    // Emitted roughly once a second with running totals.
-    void statsUpdated(quint64 packetsReceived, quint64 samplesReceived, double approxSampleRateHz);
-    void errorOccurred(const QString &message);
-    // One 63-sample RX1 sub-frame, interleaved I/Q normalized to [-1, 1].
-    void iqSamplesReady(QVector<double> interleavedIQ);
+    void setAttenuation(int db) override { m_attenuationDb = qBound(0, db, 31); }
+    int attenuation() const override { return m_attenuationDb; }
 
 private slots:
     void readPendingDatagrams();

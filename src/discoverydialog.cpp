@@ -61,6 +61,13 @@ DiscoveryDialog::DiscoveryDialog(QWidget *parent) : QDialog(parent) {
     m_portEdit->setFixedWidth(60);
     m_portEdit->setToolTip(tr("Port (default 1024)"));
 
+    m_protocolCombo = new QComboBox(this);
+    m_protocolCombo->addItem(tr("Protocol 1"), ORIGINAL_PROTOCOL);
+    m_protocolCombo->addItem(tr("Protocol 2"), NEW_PROTOCOL);
+    m_protocolCombo->setToolTip(
+        tr("Which protocol the radio at this address speaks - discovery infers this automatically, "
+           "but a direct-by-IP connect has no reply to read it from."));
+
     m_discoverButton = new QPushButton(tr("Discover"), this);
     connect(m_discoverButton, &QPushButton::clicked, this, &DiscoveryDialog::startDiscovery);
 
@@ -99,6 +106,7 @@ DiscoveryDialog::DiscoveryDialog(QWidget *parent) : QDialog(parent) {
         const DeviceFavorite &fav = m_favorites.at(index - 1);
         m_hostEdit->setText(fav.host);
         m_portEdit->setText(QString::number(fav.port));
+        m_protocolCombo->setCurrentIndex(m_protocolCombo->findData(fav.protocol));
         connectDirectly();
     });
 
@@ -119,6 +127,7 @@ DiscoveryDialog::DiscoveryDialog(QWidget *parent) : QDialog(parent) {
         fav.description = description;
         fav.host = host;
         fav.port = quint16(m_portEdit->text().toUInt());
+        fav.protocol = m_protocolCombo->currentData().toInt();
         m_favorites.append(fav);
         saveFavorites();
         refreshFavoritesCombo();
@@ -136,6 +145,7 @@ DiscoveryDialog::DiscoveryDialog(QWidget *parent) : QDialog(parent) {
     auto *hostLayout = new QHBoxLayout;
     hostLayout->addWidget(m_hostEdit);
     hostLayout->addWidget(m_portEdit);
+    hostLayout->addWidget(m_protocolCombo);
     hostLayout->addWidget(m_connectDirectButton);
     hostLayout->addWidget(m_discoverButton);
 
@@ -199,7 +209,7 @@ void DiscoveryDialog::connectDirectly() {
     }
 
     DiscoveredDevice device;
-    device.protocol = ORIGINAL_PROTOCOL; // the only protocol OldProtocolConnection supports so far
+    device.protocol = m_protocolCombo->currentData().toInt();
     device.address = address;
     device.port = quint16(m_portEdit->text().toUInt());
     device.name = tr("%1 (direct)").arg(host);
@@ -240,6 +250,7 @@ void DiscoveryDialog::loadFavorites() {
         fav.description = settings.value(QStringLiteral("description")).toString();
         fav.host = settings.value(QStringLiteral("host")).toString();
         fav.port = quint16(settings.value(QStringLiteral("port"), 1024).toUInt());
+        fav.protocol = settings.value(QStringLiteral("protocol"), ORIGINAL_PROTOCOL).toInt();
         m_favorites.append(fav);
     }
     settings.endArray();
@@ -254,6 +265,7 @@ void DiscoveryDialog::saveFavorites() {
         settings.setValue(QStringLiteral("description"), m_favorites.at(i).description);
         settings.setValue(QStringLiteral("host"), m_favorites.at(i).host);
         settings.setValue(QStringLiteral("port"), m_favorites.at(i).port);
+        settings.setValue(QStringLiteral("protocol"), m_favorites.at(i).protocol);
     }
     settings.endArray();
 }

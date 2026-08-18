@@ -18,6 +18,7 @@
 
 #include "discoverydialog.h"
 #include "filtertable.h"
+#include "newprotocol.h"
 #include "oldprotocol.h"
 #include "panadapterwidget.h"
 #include "rxaudio.h"
@@ -403,13 +404,6 @@ void MainWindow::showDiscoveryDialog() {
     // through the dereferenced temporary would dangle as soon as this
     // statement ends.
     const DiscoveredDevice device = *dialog.selectedDevice();
-    if (device.protocol != ORIGINAL_PROTOCOL) {
-        statusBar()->showMessage(
-            tr("%1 uses Protocol 2, which isn't wired up yet - only Protocol 1 devices can be connected.")
-                .arg(device.name));
-        return;
-    }
-
     connectToDevice(device);
 }
 
@@ -510,16 +504,24 @@ void MainWindow::connectToDevice(const DiscoveredDevice &device) {
         Qt::QueuedConnection);
     statusBar()->showMessage(tr("Opening audio engine..."));
 
-    m_connection = new OldProtocolConnection();
+    // Which wire protocol a device speaks only changes which concrete
+    // RadioConnection subclass gets constructed here - everything else
+    // (signal wiring, thread affinity, audio/spectrum feed) is identical
+    // since both implement the same RadioConnection interface.
+    if (device.protocol == NEW_PROTOCOL) {
+        m_connection = new NewProtocolConnection();
+    } else {
+        m_connection = new OldProtocolConnection();
+    }
     m_connection->moveToThread(m_workerThread);
-    connect(m_connection, &OldProtocolConnection::statsUpdated, this,
+    connect(m_connection, &RadioConnection::statsUpdated, this,
             [this, device](quint64 packets, quint64 samples, double sps) {
                 Q_UNUSED(packets);
                 Q_UNUSED(samples);
                 statusBar()->showMessage(
                     tr("Connected to %1 at %2 - %3 samples/s").arg(device.name, device.address.toString()).arg(sps, 0, 'f', 0));
             });
-    connect(m_connection, &OldProtocolConnection::errorOccurred, this, [this](const QString &msg) {
+    connect(m_connection, &RadioConnection::errorOccurred, this, [this](const QString &msg) {
         statusBar()->showMessage(tr("Radio connection error: %1").arg(msg));
     });
     // Two separate connections, not one lambda doing both feeds: context
@@ -533,12 +535,12 @@ void MainWindow::connectToDevice(const DiscoveredDevice &device) {
     // because the lambdas were written with `this` captured for other
     // members - the connection's context object is what determines which
     // thread actually runs it, not what the lambda captures.
-    connect(m_connection, &OldProtocolConnection::iqSamplesReady, m_rxAudio, [this](const QVector<double> &iq) {
+    connect(m_connection, &RadioConnection::iqSamplesReady, m_rxAudio, [this](const QVector<double> &iq) {
         for (int i = 0; i + 1 < iq.size(); i += 2) {
             m_rxAudio->feedSample(iq[i], iq[i + 1]);
         }
     });
-    connect(m_connection, &OldProtocolConnection::iqSamplesReady, m_spectrum, [this](const QVector<double> &iq) {
+    connect(m_connection, &RadioConnection::iqSamplesReady, m_spectrum, [this](const QVector<double> &iq) {
         for (int i = 0; i + 1 < iq.size(); i += 2) {
             m_spectrum->feedSample(iq[i], iq[i + 1]);
         }
@@ -591,7 +593,7 @@ void MainWindow::disconnectFromRadio() {
         // itself thread-safe to call from anywhere, but
         // disconnectFromDevice()/close() aren't, so they're queued too -
         // in the same invocation, so ordering is preserved.
-        OldProtocolConnection *connection = m_connection;
+        RadioConnection *connection = m_connection;
         QMetaObject::invokeMethod(
             connection,
             [connection]() {

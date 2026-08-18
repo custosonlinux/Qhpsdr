@@ -58,6 +58,9 @@ set(SOURCES
     core/discovered.h
     core/oldprotocol.cpp
     core/oldprotocol.h
+    core/newprotocol.cpp
+    core/newprotocol.h
+    core/radioconnection.h
     core/rxaudio.cpp
     core/rxaudio.h
     core/filtertable.cpp
