@@ -290,6 +290,12 @@ double ToolbarWidget::bandCenterFrequencyHz(int index) const {
     return (kBands[index].lowHz + kBands[index].highHz) / 2.0;
 }
 
+QString ToolbarWidget::currentBandLabel() const { return m_bandCombo ? m_bandCombo->currentText() : QString(); }
+
+QString ToolbarWidget::currentNoiseBlankerLabel() const {
+    return m_nbCombo ? m_nbCombo->currentText() : QString();
+}
+
 void ToolbarWidget::setFrequencyHz(double hz) {
     const int index = bandIndexForFrequency(hz);
     if (index >= 0) {

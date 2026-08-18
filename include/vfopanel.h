@@ -65,6 +65,14 @@ public:
     // make the meter falsely show a weaker signal (see setSignalDbm()).
     int attenuationDb() const;
 
+    // Band/noise-blanker labels for the summary line above the frequency
+    // LCD (see updateInfoLabel()) - VfoPanel doesn't own either piece of
+    // state itself (ToolbarWidget does), so MainWindow pushes them in
+    // whenever they change. Empty band label omits that part of the
+    // summary (e.g. a frequency outside all listed bands).
+    void setBandLabel(const QString &label);
+    void setNoiseBlankerLabel(const QString &label);
+
     void setConnected(bool connected);
 
 signals:
@@ -94,7 +102,11 @@ private:
     void onFreqDigitClicked(int charIndex);
     void stepFrequencyByDigit(int direction);
     void highlightSelectedDigit();
+    // Recomposes m_infoLabel from band/mode/filter/noise-blanker whenever
+    // any of them changes.
+    void updateInfoLabel();
 
+    QLabel *m_infoLabel = nullptr;
     QLineEdit *m_freqEdit = nullptr;
     QComboBox *m_modeCombo = nullptr;
     QComboBox *m_stepCombo = nullptr;
@@ -111,6 +123,8 @@ private:
     // digit (0 = units/1Hz, 3 = thousands/1kHz, ...) - matches
     // kDefaultStepIndex's 1kHz step until the user clicks a digit.
     int m_selectedDigitPlace = 3;
+    QString m_bandLabel;
+    QString m_noiseBlankerLabel = QStringLiteral("NB Off");
 };
 
 #endif // QHPSDR_VFOPANEL_H

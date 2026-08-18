@@ -14,6 +14,7 @@
 #include <QPalette>
 #include <QProgressBar>
 #include <QSpinBox>
+#include <QStringList>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -144,7 +145,10 @@ const char *const kFreqEditStyle =
     "    stop:0 #e08a1e, stop:1 #b6690f);"
     "  color: #14100a;"
     "  border: 1px solid #6b4108;"
-    "  border-radius: 4px;"
+    "  border-top-left-radius: 0px;"
+    "  border-top-right-radius: 0px;"
+    "  border-bottom-left-radius: 4px;"
+    "  border-bottom-right-radius: 4px;"
     "  padding: 2px 10px;"
     "  selection-background-color: #ffe680;"
     "  selection-color: #14100a;"
@@ -154,6 +158,19 @@ const char *const kFreqEditStyle =
     "    stop:0 #4a4741, stop:1 #38352f);"
     "  color: #77716a;"
     "  border-color: #29271f;"
+    "}";
+
+// Compact summary strip sitting right above the frequency LCD - same
+// amber family, darker/smaller so the big digits stay the focal point.
+const char *const kInfoLabelStyle =
+    "QLabel {"
+    "  background: #241a0c;"
+    "  color: #e0a84a;"
+    "  border: 1px solid #6b4108;"
+    "  border-bottom: none;"
+    "  border-top-left-radius: 4px;"
+    "  border-top-right-radius: 4px;"
+    "  padding: 1px 10px;"
     "}";
 
 const char *const kDarkLabelStyle = "color: #7fb6c4;";
@@ -178,6 +195,14 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     QPalette pal = palette();
     pal.setColor(QPalette::Window, QColor(0x0a, 0x0e, 0x13));
     setPalette(pal);
+
+    m_infoLabel = new QLabel(this);
+    m_infoLabel->setStyleSheet(kInfoLabelStyle);
+    QFont infoFont = m_infoLabel->font();
+    infoFont.setPointSizeF(infoFont.pointSizeF() * 0.9);
+    infoFont.setBold(true);
+    infoFont.setLetterSpacing(QFont::PercentageSpacing, 105);
+    m_infoLabel->setFont(infoFont);
 
     m_freqEdit = new FrequencyLineEdit(this, this);
     m_freqEdit->setValidator(new QIntValidator(0, 999999999, m_freqEdit));
@@ -250,18 +275,21 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     attenLabel->setStyleSheet(kDarkLabelStyle);
 
     auto *grid = new QGridLayout;
-    grid->addWidget(m_freqEdit, 0, 0, 1, 3);
-    grid->addWidget(hzLabel, 0, 3);
-    grid->addWidget(modeLabel, 1, 0);
-    grid->addWidget(m_modeCombo, 1, 1);
-    grid->addWidget(stepLabel, 1, 2);
-    grid->addWidget(m_stepCombo, 1, 3);
-    grid->addWidget(filterLabel, 1, 4);
-    grid->addWidget(m_filterCombo, 1, 5);
-    grid->addWidget(attenLabel, 1, 6);
-    grid->addWidget(m_attenSpin, 1, 7);
-    grid->addWidget(m_meterLabel, 2, 0);
-    grid->addWidget(m_meter, 2, 1, 1, 7);
+    grid->setVerticalSpacing(0);
+    grid->addWidget(m_infoLabel, 0, 0, 1, 4);
+    grid->addWidget(m_freqEdit, 1, 0, 1, 3);
+    grid->addWidget(hzLabel, 1, 3);
+    grid->setRowMinimumHeight(2, 6); // restore normal spacing below the attached info/freq block
+    grid->addWidget(modeLabel, 3, 0);
+    grid->addWidget(m_modeCombo, 3, 1);
+    grid->addWidget(stepLabel, 3, 2);
+    grid->addWidget(m_stepCombo, 3, 3);
+    grid->addWidget(filterLabel, 3, 4);
+    grid->addWidget(m_filterCombo, 3, 5);
+    grid->addWidget(attenLabel, 3, 6);
+    grid->addWidget(m_attenSpin, 3, 7);
+    grid->addWidget(m_meterLabel, 4, 0);
+    grid->addWidget(m_meter, 4, 1, 1, 7);
 
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(grid);
@@ -339,6 +367,7 @@ void VfoPanel::repopulateFilterCombo() {
     if (defaultIndex >= 0 && defaultIndex < filters.size()) {
         m_filterCombo->setCurrentIndex(defaultIndex);
     }
+    updateInfoLabel();
 }
 
 int VfoPanel::attenuationDb() const { return m_attenSpin ? m_attenSpin->value() : 0; }
@@ -358,6 +387,7 @@ void VfoPanel::setFilterIndex(int index) {
     if (index >= 0 && index < m_filterCombo->count()) {
         m_filterCombo->setCurrentIndex(index);
     }
+    updateInfoLabel();
 }
 
 int VfoPanel::currentStepIndex() const { return m_stepCombo->currentIndex(); }
@@ -383,6 +413,31 @@ void VfoPanel::setSignalDbm(double dbm) {
     }
     m_meter->setFormat(text + tr("  (%1 dBm)").arg(int(dbm)));
     m_meter->setValue(int(qBound(-1270.0, dbm * 10.0, -130.0)));
+}
+
+void VfoPanel::setBandLabel(const QString &label) {
+    m_bandLabel = label;
+    updateInfoLabel();
+}
+
+void VfoPanel::setNoiseBlankerLabel(const QString &label) {
+    m_noiseBlankerLabel = label;
+    updateInfoLabel();
+}
+
+void VfoPanel::updateInfoLabel() {
+    QStringList parts;
+    if (!m_bandLabel.isEmpty()) {
+        parts << m_bandLabel;
+    }
+    parts << m_modeCombo->currentText();
+    if (m_filterCombo->count() > 0) {
+        parts << m_filterCombo->currentText();
+    }
+    if (!m_noiseBlankerLabel.isEmpty()) {
+        parts << m_noiseBlankerLabel;
+    }
+    m_infoLabel->setText(parts.join(QStringLiteral("   •   ")));
 }
 
 void VfoPanel::setConnected(bool connected) {
@@ -418,6 +473,7 @@ void VfoPanel::onFilterComboChanged(int index) {
     if (index < 0 || index >= filters.size()) {
         return;
     }
+    updateInfoLabel();
     emit filterSelected(filters[index].low, filters[index].high);
 }
 

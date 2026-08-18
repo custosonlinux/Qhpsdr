@@ -54,6 +54,13 @@ public:
     // band-stack entry exists yet for that band. Returns 0 if out of range.
     double bandCenterFrequencyHz(int index) const;
 
+    // Current band-combo/noise-blanker-combo text, for VfoPanel's summary
+    // line above the frequency LCD (MainWindow pushes these into
+    // VfoPanel::setBandLabel()/setNoiseBlankerLabel() whenever they
+    // change) - just the combo's own displayed text, no separate state.
+    QString currentBandLabel() const;
+    QString currentNoiseBlankerLabel() const;
+
     // RF gain calibration offset in dB, subtracted from the displayed
     // S-meter reading (core/deskhpsdr-src/radio.c: adc[0].gain, a pure
     // calibration constant for standard - non-HermesLite2 - boards, not

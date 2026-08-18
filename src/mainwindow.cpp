@@ -154,6 +154,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             QMetaObject::invokeMethod(
                 m_rxAudio, [this, mode]() { m_rxAudio->setNoiseBlanker(mode); }, Qt::QueuedConnection);
         }
+        m_vfoPanel->setNoiseBlankerLabel(m_toolbar->currentNoiseBlankerLabel());
     });
     connect(m_toolbar, &ToolbarWidget::noiseReductionChanged, this, [this](NoiseReductionMode mode) {
         if (m_rxAudio) {
@@ -192,6 +193,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_panadapter->setCenterFrequencyHz(m_vfoPanel->frequencyHz());
     m_panadapter->setSampleRateHz(48000.0);
     m_toolbar->setFrequencyHz(m_vfoPanel->frequencyHz());
+    m_vfoPanel->setBandLabel(m_toolbar->currentBandLabel());
+    m_vfoPanel->setNoiseBlankerLabel(m_toolbar->currentNoiseBlankerLabel());
     {
         const FilterEntry f = m_vfoPanel->currentFilter();
         m_panadapter->setPassband(f.low, f.high);
@@ -540,6 +543,7 @@ void MainWindow::retuneTo(double hz) {
     }
     m_panadapter->setCenterFrequencyHz(hz);
     m_toolbar->setFrequencyHz(hz);
+    m_vfoPanel->setBandLabel(m_toolbar->currentBandLabel());
     updateBandStack();
 }
 
