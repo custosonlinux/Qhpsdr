@@ -81,6 +81,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         // signal for this particular case.
         const FilterEntry f = m_vfoPanel->currentFilter();
         m_panadapter->setPassband(f.low, f.high);
+        updateBandStack();
     });
     connect(m_vfoPanel, &VfoPanel::filterSelected, this, [this](double lowHz, double highHz) {
         if (m_rxAudio) {
@@ -89,6 +90,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 Qt::QueuedConnection);
         }
         m_panadapter->setPassband(lowHz, highHz);
+        updateBandStack();
     });
     connect(m_vfoPanel, &VfoPanel::attenuationChanged, this, [this](int db) {
         if (m_connection) {
@@ -96,20 +98,38 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 m_connection, [this, db]() { m_connection->setAttenuation(db); }, Qt::QueuedConnection);
         }
     });
-    connect(m_toolbar, &ToolbarWidget::bandSelected, this, [this](double hz) {
-        retuneTo(hz);
-        // Picking a band (unlike just retuning within one) recalls a
-        // sensible default mode - see core/filtertable.h's
-        // defaultModeForFrequency(). A plain typed/clicked/wheeled
-        // frequency change leaves the current mode alone.
-        const RxMode mode = defaultModeForFrequency(hz);
+    connect(m_toolbar, &ToolbarWidget::bandSelected, this, [this](int bandIndex, double centerHz) {
+        // Recall that band's last-used frequency/mode/filter if we have
+        // one (see BandStackEntry/updateBandStack()); otherwise fall back
+        // to the band center + a sensible band-plan-default mode, same as
+        // before this existed. A plain typed/clicked/wheeled frequency
+        // change (not a band switch) leaves the current mode alone.
+        const auto it = m_bandStack.constFind(bandIndex);
+        const bool haveEntry = it != m_bandStack.constEnd();
+        const double hz = haveEntry ? it->frequencyHz : centerHz;
+        const RxMode mode = haveEntry ? RxMode(it->mode) : defaultModeForFrequency(centerHz);
+
+        // Mode/filter before retuneTo(): it calls updateBandStack() at the
+        // end, which would otherwise capture the *old* mode/filter against
+        // the *new* frequency and immediately clobber the entry we just
+        // looked up.
         m_vfoPanel->setRxMode(mode);
+        if (haveEntry) {
+            m_vfoPanel->setFilterIndex(it->filterIndex);
+        }
+        retuneTo(hz);
         if (m_rxAudio) {
             QMetaObject::invokeMethod(
                 m_rxAudio, [this, mode]() { m_rxAudio->setMode(mode); }, Qt::QueuedConnection);
         }
         const FilterEntry f = m_vfoPanel->currentFilter();
         m_panadapter->setPassband(f.low, f.high);
+        if (haveEntry && m_rxAudio) {
+            // setMode() above already re-applied its own default filter
+            // for the new mode - override with the specific one we saved.
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, f]() { m_rxAudio->setPassband(f.low, f.high); }, Qt::QueuedConnection);
+        }
     });
     connect(m_toolbar, &ToolbarWidget::afGainChanged, this, [this](double dB) {
         if (m_rxAudio) {
@@ -256,6 +276,17 @@ void MainWindow::saveSettings() {
     settings.setValue(QStringLiteral("agcTopDb"), m_toolbar->agcTopDb());
     settings.setValue(QStringLiteral("noiseBlankerMode"), int(m_toolbar->noiseBlankerMode()));
     settings.endGroup();
+
+    settings.beginWriteArray(QStringLiteral("bandstack"));
+    int arrayIndex = 0;
+    for (auto it = m_bandStack.constBegin(); it != m_bandStack.constEnd(); ++it) {
+        settings.setArrayIndex(arrayIndex++);
+        settings.setValue(QStringLiteral("band"), it.key());
+        settings.setValue(QStringLiteral("frequencyHz"), it->frequencyHz);
+        settings.setValue(QStringLiteral("mode"), it->mode);
+        settings.setValue(QStringLiteral("filterIndex"), it->filterIndex);
+    }
+    settings.endArray();
 }
 
 void MainWindow::loadSettings() {
@@ -280,6 +311,19 @@ void MainWindow::loadSettings() {
     m_toolbar->setNoiseBlankerMode(
         NoiseBlankerMode(settings.value(QStringLiteral("noiseBlankerMode"), int(NoiseBlankerMode::Off)).toInt()));
     settings.endGroup();
+
+    m_bandStack.clear();
+    const int bandStackCount = settings.beginReadArray(QStringLiteral("bandstack"));
+    for (int i = 0; i < bandStackCount; ++i) {
+        settings.setArrayIndex(i);
+        const int band = settings.value(QStringLiteral("band")).toInt();
+        BandStackEntry entry;
+        entry.frequencyHz = settings.value(QStringLiteral("frequencyHz")).toDouble();
+        entry.mode = settings.value(QStringLiteral("mode")).toInt();
+        entry.filterIndex = settings.value(QStringLiteral("filterIndex")).toInt();
+        m_bandStack[band] = entry;
+    }
+    settings.endArray();
 }
 
 void MainWindow::showDiscoveryDialog() {
@@ -448,6 +492,15 @@ void MainWindow::retuneTo(double hz) {
     }
     m_panadapter->setCenterFrequencyHz(hz);
     m_toolbar->setFrequencyHz(hz);
+    updateBandStack();
+}
+
+void MainWindow::updateBandStack() {
+    const int bandIndex = m_toolbar->bandIndexForFrequency(m_vfoPanel->frequencyHz());
+    if (bandIndex < 0) {
+        return;
+    }
+    m_bandStack[bandIndex] = {m_vfoPanel->frequencyHz(), int(m_vfoPanel->rxMode()), m_vfoPanel->currentFilterIndex()};
 }
 
 void MainWindow::disconnectFromRadio() {

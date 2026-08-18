@@ -11,11 +11,17 @@ class QSlider;
 
 // Band/gain toolbar, modeled on deskHPSDR's "sliders" bar
 // (core/deskhpsdr-src/sliders.c) which sits below the receiver panel
-// (panadapter+waterfall) in the real app's stacking order. deskHPSDR's
-// actual band control is a single "Band" button opening a popup menu
-// (band_menu.c) that recalls each band's last-tuned frequency via its
-// bandstack - not implemented here; picking a band here just retunes to
-// that band's center frequency, a deliberate simplification.
+// (panadapter+waterfall) in the real app's stacking order. Band selection
+// is a plain combo, not deskHPSDR's popup-menu-with-multiple-stack-entries
+// (core/deskhpsdr-src/band_menu.c/bandstack_menu.c - several stored
+// frequency/mode slots per band, cycled by repeatedly clicking the same
+// band) - a deliberate simplification down to a single "last used"
+// band-stack entry per band, which MainWindow owns and persists (see
+// MainWindow::retuneTo()/bandSelected's handler and save/loadSettings()).
+// This widget only exposes what MainWindow needs for that: which band a
+// frequency falls in (bandIndexForFrequency()) and each band's fallback
+// center frequency (bandCenterFrequencyHz()) for bands with no saved entry
+// yet.
 class ToolbarWidget : public QWidget {
     Q_OBJECT
 
@@ -30,6 +36,22 @@ public:
     // wheel-tuning, panadapter click, or the app's own startup default).
     // No-op if hz doesn't fall in any listed band.
     void setFrequencyHz(double hz);
+
+    // Index into the band list whose range contains hz, or -1 if none
+    // does - for MainWindow's band-stack (see MainWindow::retuneTo()/the
+    // bandSelected() handler), which needs to know *which* band a
+    // frequency change happened in, not just a center frequency to fall
+    // back to.
+    int bandIndexForFrequency(double hz) const;
+
+    // The band list's size, for band-stack persistence (MainWindow::save/
+    // loadSettings()) - never changes after construction.
+    int bandCount() const;
+
+    // A band's center frequency by index, matching bandIndexForFrequency()'s
+    // indexing - the same fallback bandSelected() itself uses when no
+    // band-stack entry exists yet for that band. Returns 0 if out of range.
+    double bandCenterFrequencyHz(int index) const;
 
     // RF gain calibration offset in dB, subtracted from the displayed
     // S-meter reading (core/deskhpsdr-src/radio.c: adc[0].gain, a pure
@@ -68,10 +90,13 @@ public:
     void setNoiseBlankerMode(NoiseBlankerMode mode);
 
 signals:
-    // Band picked from the combo - just a frequency to tune to (band
-    // center), not a full band-state change (filters/antenna aren't
-    // touched).
-    void bandSelected(double frequencyHz);
+    // Band picked from the combo, by index (matching
+    // bandIndexForFrequency()) plus that band's center frequency - the
+    // index lets MainWindow look up a saved band-stack entry (last
+    // frequency/mode/filter used on that band) instead of always
+    // retuning to center; centerFrequencyHz is what to fall back to when
+    // no such entry exists yet.
+    void bandSelected(int bandIndex, double centerFrequencyHz);
 
     // AF gain in dB, -40..0 (core/deskhpsdr-src/sliders.c's af_gain_scale
     // range) - see RxAudioChannel::setAfGain().

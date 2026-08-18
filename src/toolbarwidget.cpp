@@ -68,7 +68,7 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
             return;
         }
         const auto &b = kBands[index];
-        emit bandSelected((b.lowHz + b.highHz) / 2.0);
+        emit bandSelected(index, (b.lowHz + b.highHz) / 2.0);
     });
 
     auto *afLabel = new QLabel(tr("AF Gain"), this);
@@ -209,13 +209,30 @@ void ToolbarWidget::setZoomFactor(int factor) {
     }
 }
 
-void ToolbarWidget::setFrequencyHz(double hz) {
+int ToolbarWidget::bandIndexForFrequency(double hz) const {
     for (int i = 0; i < int(sizeof(kBands) / sizeof(kBands[0])); ++i) {
         if (hz >= kBands[i].lowHz && hz <= kBands[i].highHz) {
-            const QSignalBlocker blocker(m_bandCombo);
-            m_bandCombo->setCurrentIndex(i);
-            return;
+            return i;
         }
+    }
+    return -1;
+}
+
+int ToolbarWidget::bandCount() const { return int(sizeof(kBands) / sizeof(kBands[0])); }
+
+double ToolbarWidget::bandCenterFrequencyHz(int index) const {
+    if (index < 0 || index >= bandCount()) {
+        return 0.0;
+    }
+    return (kBands[index].lowHz + kBands[index].highHz) / 2.0;
+}
+
+void ToolbarWidget::setFrequencyHz(double hz) {
+    const int index = bandIndexForFrequency(hz);
+    if (index >= 0) {
+        const QSignalBlocker blocker(m_bandCombo);
+        m_bandCombo->setCurrentIndex(index);
+        return;
     }
 }
 

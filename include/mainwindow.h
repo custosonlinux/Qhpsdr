@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QMap>
 #include <QVector>
 
 class OldProtocolConnection;
@@ -16,6 +17,18 @@ class QAudioSink;
 class QIODevice;
 class QThread;
 class QTimer;
+
+// A single-entry-per-band "band stack" (deskHPSDR's band_menu.c/
+// bandstack_menu.c has several stored frequency/mode slots per band,
+// cycled by repeatedly clicking the same band - simplified here to just
+// the last-used one). mode/filterIndex stored as plain int (not RxMode)
+// to avoid pulling rxaudio.h into this header for a forward-declared
+// class's private state.
+struct BandStackEntry {
+    double frequencyHz = 0.0;
+    int mode = 0;
+    int filterIndex = 0;
+};
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -38,11 +51,20 @@ private:
     // band combo in sync.
     void retuneTo(double hz);
     // Persists/restores frequency, mode, filter, step, attenuation, AF/RF
-    // gain and zoom across restarts (QSettings, org/app "Qhpsdr" - see
-    // main.cpp). loadSettings() runs once at startup before any device
-    // connection; saveSettings() runs from the destructor.
+    // gain, zoom, AGC/noise-blanker and the band stack across restarts
+    // (QSettings, org/app "Qhpsdr" - see main.cpp). loadSettings() runs
+    // once at startup before any device connection; saveSettings() runs
+    // from the destructor.
     void saveSettings();
     void loadSettings();
+    // Captures the current frequency/mode/filter into m_bandStack, keyed
+    // by whichever band (ToolbarWidget::bandIndexForFrequency()) the
+    // current frequency falls in - a no-op outside all listed bands.
+    // Called after every frequency/mode/filter change (matches
+    // deskHPSDR's vfo_save_bandstack(): implicit, continuous, not tied to
+    // an explicit save action) so switching back to a band later recalls
+    // exactly where it was left, not just the band's center frequency.
+    void updateBandStack();
 
     // OldProtocolConnection + RxAudioChannel (network I/O and WDSP audio
     // demod) live on m_workerThread; SpectrumAnalyzer (the panadapter's
@@ -75,6 +97,10 @@ private:
     bool m_spectrumDirty = false;
     float m_dbFloor = -120.0f;
     float m_dbCeil = -40.0f;
+
+    // Keyed by ToolbarWidget::bandIndexForFrequency() - see
+    // updateBandStack(). Persisted via save/loadSettings().
+    QMap<int, BandStackEntry> m_bandStack;
 };
 
 #endif // MAINWINDOW_H
