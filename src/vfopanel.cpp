@@ -352,6 +352,24 @@ FilterEntry VfoPanel::currentFilter() const {
     return FilterEntry{};
 }
 
+int VfoPanel::currentFilterIndex() const { return m_filterCombo->currentIndex(); }
+
+void VfoPanel::setFilterIndex(int index) {
+    if (index >= 0 && index < m_filterCombo->count()) {
+        m_filterCombo->setCurrentIndex(index);
+    }
+}
+
+int VfoPanel::currentStepIndex() const { return m_stepCombo->currentIndex(); }
+
+void VfoPanel::setStepIndex(int index) {
+    if (index >= 0 && index < m_stepCombo->count()) {
+        m_stepCombo->setCurrentIndex(index);
+    }
+}
+
+void VfoPanel::setAttenuationDb(int db) { m_attenSpin->setValue(db); }
+
 void VfoPanel::setSignalDbm(double dbm) {
     // core/deskhpsdr-src/meter.c: S9 = -73dBm (HF), 6dB per S-unit below
     // S9, direct dB-over-S9 above it (e.g. "S9+20").

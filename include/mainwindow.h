@@ -37,6 +37,12 @@ private:
     // new frequency to the radio, and keeps the panadapter and toolbar's
     // band combo in sync.
     void retuneTo(double hz);
+    // Persists/restores frequency, mode, filter, step, attenuation, AF/RF
+    // gain and zoom across restarts (QSettings, org/app "Qhpsdr" - see
+    // main.cpp). loadSettings() runs once at startup before any device
+    // connection; saveSettings() runs from the destructor.
+    void saveSettings();
+    void loadSettings();
 
     // OldProtocolConnection + RxAudioChannel (network I/O and WDSP audio
     // demod) live on m_workerThread; SpectrumAnalyzer (the panadapter's

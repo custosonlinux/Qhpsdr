@@ -43,6 +43,17 @@ public:
     // signal (which doesn't fire for mode-change-driven default changes).
     FilterEntry currentFilter() const;
 
+    // Filter/step combo index, for persisting and restoring the exact
+    // selection (see MainWindow::saveSettings()/loadSettings()) rather
+    // than just re-deriving each mode's default. Setting one doesn't
+    // repopulate the other combo or change mode - callers restoring saved
+    // state should set mode first, then these.
+    int currentFilterIndex() const;
+    void setFilterIndex(int index);
+    int currentStepIndex() const;
+    void setStepIndex(int index);
+    void setAttenuationDb(int db);
+
     // WDSP's own S-meter reading in dBm (RxAudioChannel::meterUpdated()).
     // Converted to S-units the same way as deskHPSDR's meter.c: S9 =
     // -73dBm (HF convention; this project doesn't have a >30MHz-aware

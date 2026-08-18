@@ -132,8 +132,34 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
 
 double ToolbarWidget::rfGainDb() const { return m_rfGainSlider ? double(m_rfGainSlider->value()) : 0.0; }
 
+void ToolbarWidget::setRfGainDb(double dB) {
+    if (m_rfGainSlider) {
+        m_rfGainSlider->setValue(int(dB));
+    }
+}
+
+double ToolbarWidget::afGainDb() const { return m_afGainSlider ? double(m_afGainSlider->value()) : 0.0; }
+
+void ToolbarWidget::setAfGainDb(double dB) {
+    if (m_afGainSlider) {
+        m_afGainSlider->setValue(int(dB));
+    }
+}
+
 int ToolbarWidget::zoomFactor() const {
     return m_zoomCombo ? m_zoomCombo->currentData().toInt() : 1;
+}
+
+void ToolbarWidget::setZoomFactor(int factor) {
+    if (!m_zoomCombo) {
+        return;
+    }
+    for (int i = 0; i < m_zoomCombo->count(); ++i) {
+        if (m_zoomCombo->itemData(i).toInt() == factor) {
+            m_zoomCombo->setCurrentIndex(i);
+            return;
+        }
+    }
 }
 
 void ToolbarWidget::setFrequencyHz(double hz) {

@@ -5,6 +5,7 @@
 #include <QMediaDevices>
 #include <QMenuBar>
 #include <QMetaObject>
+#include <QSettings>
 #include <QStatusBar>
 #include <QApplication>
 #include <QSplitter>
@@ -125,9 +126,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         m_latestSpectrum = db;
         m_spectrumDirty = true;
     });
+    loadSettings();
     m_panadapter->setCenterFrequencyHz(m_vfoPanel->frequencyHz());
     m_panadapter->setSampleRateHz(48000.0);
     m_toolbar->setFrequencyHz(m_vfoPanel->frequencyHz());
+    {
+        const FilterEntry f = m_vfoPanel->currentFilter();
+        m_panadapter->setPassband(f.low, f.high);
+    }
 
     // Painting on every incoming spectrum frame (~23/s) made each frame's
     // handler expensive enough (grid+trace redraw, waterfall image scroll,
@@ -205,6 +211,7 @@ void MainWindow::repaintDisplays() {
 }
 
 MainWindow::~MainWindow() {
+    saveSettings();
     disconnectFromRadio();
     if (m_workerThread) {
         m_workerThread->quit();
@@ -214,6 +221,40 @@ MainWindow::~MainWindow() {
         m_spectrumThread->quit();
         m_spectrumThread->wait();
     }
+}
+
+void MainWindow::saveSettings() {
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("vfo"));
+    settings.setValue(QStringLiteral("frequencyHz"), m_vfoPanel->frequencyHz());
+    settings.setValue(QStringLiteral("mode"), int(m_vfoPanel->rxMode()));
+    settings.setValue(QStringLiteral("filterIndex"), m_vfoPanel->currentFilterIndex());
+    settings.setValue(QStringLiteral("stepIndex"), m_vfoPanel->currentStepIndex());
+    settings.setValue(QStringLiteral("attenuationDb"), m_vfoPanel->attenuationDb());
+    settings.setValue(QStringLiteral("afGainDb"), m_toolbar->afGainDb());
+    settings.setValue(QStringLiteral("rfGainDb"), m_toolbar->rfGainDb());
+    settings.setValue(QStringLiteral("zoomFactor"), m_toolbar->zoomFactor());
+    settings.endGroup();
+}
+
+void MainWindow::loadSettings() {
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("vfo"));
+    if (!settings.contains(QStringLiteral("frequencyHz"))) {
+        settings.endGroup();
+        return; // First run - nothing saved yet, keep the built-in defaults.
+    }
+    m_vfoPanel->setFrequencyHz(settings.value(QStringLiteral("frequencyHz")).toDouble());
+    // Mode first: setRxMode() repopulates the filter combo to that mode's
+    // default list/selection, which the saved filterIndex then overrides.
+    m_vfoPanel->setRxMode(RxMode(settings.value(QStringLiteral("mode")).toInt()));
+    m_vfoPanel->setFilterIndex(settings.value(QStringLiteral("filterIndex")).toInt());
+    m_vfoPanel->setStepIndex(settings.value(QStringLiteral("stepIndex")).toInt());
+    m_vfoPanel->setAttenuationDb(settings.value(QStringLiteral("attenuationDb")).toInt());
+    m_toolbar->setAfGainDb(settings.value(QStringLiteral("afGainDb")).toDouble());
+    m_toolbar->setRfGainDb(settings.value(QStringLiteral("rfGainDb")).toDouble());
+    m_toolbar->setZoomFactor(settings.value(QStringLiteral("zoomFactor"), 1).toInt());
+    settings.endGroup();
 }
 
 void MainWindow::showDiscoveryDialog() {

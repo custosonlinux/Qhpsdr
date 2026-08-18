@@ -35,6 +35,11 @@ public:
     // sent to hardware). Lets the user zero out the meter against a known
     // reference rather than trust the uncalibrated default.
     double rfGainDb() const;
+    void setRfGainDb(double dB);
+
+    // AF (output volume) gain in dB, -40..0 - see RxAudioChannel::setAfGain().
+    double afGainDb() const;
+    void setAfGainDb(double dB);
 
     // Panadapter/waterfall zoom: 1/2/4/8/16 - how much of the full
     // received span (the hardware's sample rate) is actually displayed,
@@ -45,6 +50,7 @@ public:
     // without its separate manual-pan step: this always centers on the
     // current tuned frequency, panning implicitly as you retune.
     int zoomFactor() const;
+    void setZoomFactor(int factor);
 
 signals:
     // Band picked from the combo - just a frequency to tune to (band
