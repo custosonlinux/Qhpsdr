@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QMetaObject>
 #include <QStandardPaths>
+#include <cmath>
 #include <thread>
 
 #include "filtertable.h"
@@ -135,6 +136,21 @@ void RxAudioChannel::setPassband(double lowHz, double highHz) {
         return;
     }
     RXASetPassband(m_channel, lowHz, highHz);
+}
+
+void RxAudioChannel::setAfGain(double dB) {
+    if (!m_open) {
+        return;
+    }
+    double amplitude;
+    if (dB <= -39.5) {
+        amplitude = 0.0;
+    } else if (dB > 0.0) {
+        amplitude = 1.0;
+    } else {
+        amplitude = std::pow(10.0, 0.05 * dB);
+    }
+    SetRXAPanelGain1(m_channel, amplitude);
 }
 
 void RxAudioChannel::feedSample(double i, double q) {

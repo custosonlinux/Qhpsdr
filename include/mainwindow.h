@@ -10,6 +10,7 @@ class SpectrumAnalyzer;
 class VfoPanel;
 class PanadapterWidget;
 class WaterfallWidget;
+class ToolbarWidget;
 class QAction;
 class QAudioSink;
 class QIODevice;
@@ -50,6 +51,7 @@ private:
     VfoPanel *m_vfoPanel = nullptr;
     PanadapterWidget *m_panadapter = nullptr;
     WaterfallWidget *m_waterfall = nullptr;
+    ToolbarWidget *m_toolbar = nullptr;
 
     // Panadapter/waterfall repainting is decoupled from the ~23/s rate
     // spectrum frames actually arrive at: painting synchronously on every

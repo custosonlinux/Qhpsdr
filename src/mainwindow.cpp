@@ -19,6 +19,7 @@
 #include "panadapterwidget.h"
 #include "rxaudio.h"
 #include "spectrumanalyzer.h"
+#include "toolbarwidget.h"
 #include "vfopanel.h"
 #include "waterfallwidget.h"
 
@@ -39,8 +40,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     // Layout mirrors deskHPSDR's radio_create_visual() stacking order
     // (core/deskhpsdr-src/radio.c): VFO bar, then the receiver panel
-    // (panadapter above waterfall, sharing the frequency axis). Zoom/pan,
-    // sliders and the button toolbar aren't ported yet.
+    // (panadapter above waterfall, sharing the frequency axis), then the
+    // band/gain toolbar (deskHPSDR's "sliders" bar sits below the
+    // receiver panel too). Zoom/pan isn't ported yet.
     m_vfoPanel = new VfoPanel(this);
 
     m_panadapter = new PanadapterWidget(this);
@@ -52,12 +54,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     splitter->setStretchFactor(0, 2);
     splitter->setStretchFactor(1, 1);
 
+    m_toolbar = new ToolbarWidget(this);
+
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(m_vfoPanel);
     layout->addWidget(splitter, /*stretch=*/1);
+    layout->addWidget(m_toolbar);
     setCentralWidget(central);
 
     connect(m_vfoPanel, &VfoPanel::frequencyEditedHz, this, [this](double hz) {
@@ -84,6 +89,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         if (m_connection) {
             QMetaObject::invokeMethod(
                 m_connection, [this, db]() { m_connection->setAttenuation(db); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_toolbar, &ToolbarWidget::bandSelected, this, [this](double hz) {
+        m_vfoPanel->setFrequencyHz(hz);
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, hz]() { m_connection->setRxFrequency(hz); }, Qt::QueuedConnection);
+        }
+        m_panadapter->setCenterFrequencyHz(hz);
+    });
+    connect(m_toolbar, &ToolbarWidget::afGainChanged, this, [this](double dB) {
+        if (m_rxAudio) {
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, dB]() { m_rxAudio->setAfGain(dB); }, Qt::QueuedConnection);
         }
     });
 
@@ -231,7 +250,9 @@ void MainWindow::showDiscoveryDialog() {
         // Compensate for whatever ADC0 attenuation is currently dialed in,
         // so raising it to fight front-end overload doesn't make the
         // meter falsely read a weaker signal - see VfoPanel::attenuationDb().
-        m_vfoPanel->setSignalDbm(dbm + m_vfoPanel->attenuationDb());
+        // Also fold in the toolbar's RF gain calibration offset - see
+        // ToolbarWidget::rfGainDb().
+        m_vfoPanel->setSignalDbm(dbm + m_vfoPanel->attenuationDb() + m_toolbar->rfGainDb());
     });
     QMetaObject::invokeMethod(
         m_rxAudio,
@@ -282,6 +303,7 @@ void MainWindow::showDiscoveryDialog() {
     QMetaObject::invokeMethod(
         m_rxAudio, [this]() { m_rxAudio->setMode(m_vfoPanel->rxMode()); }, Qt::QueuedConnection);
     m_vfoPanel->setConnected(true);
+    m_toolbar->setConnected(true);
     m_disconnectAction->setEnabled(true);
 }
 
@@ -334,6 +356,7 @@ void MainWindow::disconnectFromRadio() {
         m_audioDevice = nullptr;
     }
     m_vfoPanel->setConnected(false);
+    m_toolbar->setConnected(false);
     m_vfoPanel->setSignalDbm(-140.0);
     m_disconnectAction->setEnabled(false);
     statusBar()->showMessage(tr("Disconnected."));

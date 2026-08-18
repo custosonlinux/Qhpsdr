@@ -65,6 +65,12 @@ public:
     // the channel is closed/still opening.
     void setPassband(double lowHz, double highHz);
 
+    // AF (output volume) gain in dB, -40..0 - core/deskhpsdr-src/
+    // receiver.c's rx_set_af_gain(): converts to a 0..1 amplitude
+    // (0 at/below -39.5dB, 1 above 0dB, pow(10, 0.05*dB) between) applied
+    // via WDSP's RXA "panel" gain stage. No-op while closed/opening.
+    void setAfGain(double dB);
+
     // i, q normalized to [-1, 1] (e.g. a 24-bit ADC sample / 2^23). No-op
     // while the channel is still opening or closed.
     void feedSample(double i, double q);

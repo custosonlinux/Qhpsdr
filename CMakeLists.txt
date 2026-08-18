@@ -61,6 +61,8 @@ set(SOURCES
     include/panadapterwidget.h
     src/waterfallwidget.cpp
     include/waterfallwidget.h
+    src/toolbarwidget.cpp
+    include/toolbarwidget.h
 )
 
 qt_add_executable(Qhpsdr ${SOURCES})
