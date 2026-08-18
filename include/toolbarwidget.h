@@ -7,6 +7,7 @@
 
 class QComboBox;
 class QLabel;
+class QPushButton;
 class QSlider;
 
 // Band/gain toolbar, modeled on deskHPSDR's "sliders" bar
@@ -89,6 +90,15 @@ public:
     NoiseBlankerMode noiseBlankerMode() const;
     void setNoiseBlankerMode(NoiseBlankerMode mode);
 
+    // The other three "QRM fighters" - see RxAudioChannel::
+    // setNoiseReduction()/setAutoNotch()/setSpectralNoiseBlanker().
+    NoiseReductionMode noiseReductionMode() const;
+    void setNoiseReductionMode(NoiseReductionMode mode);
+    bool autoNotchEnabled() const;
+    void setAutoNotchEnabled(bool enabled);
+    bool spectralNoiseBlankerEnabled() const;
+    void setSpectralNoiseBlankerEnabled(bool enabled);
+
 signals:
     // Band picked from the combo, by index (matching
     // bandIndexForFrequency()) plus that band's center frequency - the
@@ -105,6 +115,9 @@ signals:
     void agcModeChanged(AgcMode mode);
     void agcTopChanged(double dB);
     void noiseBlankerChanged(NoiseBlankerMode mode);
+    void noiseReductionChanged(NoiseReductionMode mode);
+    void autoNotchChanged(bool enabled);
+    void spectralNoiseBlankerChanged(bool enabled);
 
 private:
     QComboBox *m_bandCombo = nullptr;
@@ -117,6 +130,9 @@ private:
     QSlider *m_agcTopSlider = nullptr;
     QLabel *m_agcTopValueLabel = nullptr;
     QComboBox *m_nbCombo = nullptr;
+    QComboBox *m_nrCombo = nullptr;
+    QPushButton *m_anfButton = nullptr;
+    QPushButton *m_snbButton = nullptr;
 };
 
 #endif // QHPSDR_TOOLBARWIDGET_H

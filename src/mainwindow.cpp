@@ -155,6 +155,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 m_rxAudio, [this, mode]() { m_rxAudio->setNoiseBlanker(mode); }, Qt::QueuedConnection);
         }
     });
+    connect(m_toolbar, &ToolbarWidget::noiseReductionChanged, this, [this](NoiseReductionMode mode) {
+        if (m_rxAudio) {
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, mode]() { m_rxAudio->setNoiseReduction(mode); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_toolbar, &ToolbarWidget::autoNotchChanged, this, [this](bool enabled) {
+        if (m_rxAudio) {
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, enabled]() { m_rxAudio->setAutoNotch(enabled); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_toolbar, &ToolbarWidget::spectralNoiseBlankerChanged, this, [this](bool enabled) {
+        if (m_rxAudio) {
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, enabled]() { m_rxAudio->setSpectralNoiseBlanker(enabled); }, Qt::QueuedConnection);
+        }
+    });
 
     m_spectrum = new SpectrumAnalyzer(this);
     connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {
@@ -275,6 +293,9 @@ void MainWindow::saveSettings() {
     settings.setValue(QStringLiteral("agcMode"), int(m_toolbar->agcMode()));
     settings.setValue(QStringLiteral("agcTopDb"), m_toolbar->agcTopDb());
     settings.setValue(QStringLiteral("noiseBlankerMode"), int(m_toolbar->noiseBlankerMode()));
+    settings.setValue(QStringLiteral("noiseReductionMode"), int(m_toolbar->noiseReductionMode()));
+    settings.setValue(QStringLiteral("autoNotchEnabled"), m_toolbar->autoNotchEnabled());
+    settings.setValue(QStringLiteral("spectralNoiseBlankerEnabled"), m_toolbar->spectralNoiseBlankerEnabled());
     settings.endGroup();
 
     settings.beginWriteArray(QStringLiteral("bandstack"));
@@ -310,6 +331,11 @@ void MainWindow::loadSettings() {
     m_toolbar->setAgcTopDb(settings.value(QStringLiteral("agcTopDb"), 80.0).toDouble());
     m_toolbar->setNoiseBlankerMode(
         NoiseBlankerMode(settings.value(QStringLiteral("noiseBlankerMode"), int(NoiseBlankerMode::Off)).toInt()));
+    m_toolbar->setNoiseReductionMode(NoiseReductionMode(
+        settings.value(QStringLiteral("noiseReductionMode"), int(NoiseReductionMode::Off)).toInt()));
+    m_toolbar->setAutoNotchEnabled(settings.value(QStringLiteral("autoNotchEnabled"), false).toBool());
+    m_toolbar->setSpectralNoiseBlankerEnabled(
+        settings.value(QStringLiteral("spectralNoiseBlankerEnabled"), false).toBool());
     settings.endGroup();
 
     m_bandStack.clear();
@@ -392,12 +418,18 @@ void MainWindow::connectToDevice(const DiscoveredDevice &device) {
         const AgcMode agcMode = m_toolbar->agcMode();
         const double agcTop = m_toolbar->agcTopDb();
         const NoiseBlankerMode nbMode = m_toolbar->noiseBlankerMode();
+        const NoiseReductionMode nrMode = m_toolbar->noiseReductionMode();
+        const bool anfEnabled = m_toolbar->autoNotchEnabled();
+        const bool snbEnabled = m_toolbar->spectralNoiseBlankerEnabled();
         QMetaObject::invokeMethod(
             m_rxAudio,
-            [this, agcMode, agcTop, nbMode]() {
+            [this, agcMode, agcTop, nbMode, nrMode, anfEnabled, snbEnabled]() {
                 m_rxAudio->setAgcMode(agcMode);
                 m_rxAudio->setAgcTop(agcTop);
                 m_rxAudio->setNoiseBlanker(nbMode);
+                m_rxAudio->setNoiseReduction(nrMode);
+                m_rxAudio->setAutoNotch(anfEnabled);
+                m_rxAudio->setSpectralNoiseBlanker(snbEnabled);
             },
             Qt::QueuedConnection);
     });

@@ -4,6 +4,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPalette>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
 
@@ -47,6 +48,16 @@ const char *const kSliderStyle =
     "  margin: -5px 0; border-radius: 6px; }"
     "QSlider::handle:horizontal:disabled { background: #5b6870; }"
     "QSlider::groove:horizontal:disabled { background: #10161c; border-color: #262f37; }";
+const char *const kToggleButtonStyle =
+    "QPushButton {"
+    "  background: #1a222b;"
+    "  color: #d8e6ea;"
+    "  border: 1px solid #33424c;"
+    "  border-radius: 3px;"
+    "  padding: 2px 8px;"
+    "}"
+    "QPushButton:disabled { color: #5b6870; }"
+    "QPushButton:checked { background: #35526a; border-color: #4a90a4; color: #ffffff; }";
 
 } // namespace
 
@@ -151,6 +162,31 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     connect(m_nbCombo, QOverload<int>::of(&QComboBox::activated), this,
             [this](int index) { emit noiseBlankerChanged(NoiseBlankerMode(index)); });
 
+    auto *nrLabel = new QLabel(tr("NR"), this);
+    nrLabel->setStyleSheet(kDarkLabelStyle);
+    m_nrCombo = new QComboBox(this);
+    m_nrCombo->setStyleSheet(kComboStyle);
+    for (const char *label : {"NR Off", "ANR", "EMNR"}) {
+        m_nrCombo->addItem(QString::fromLatin1(label));
+    }
+    m_nrCombo->setToolTip(tr("Noise reduction (broadband noise, not impulse noise - see NB for that). "
+                              "EMNR is generally cleaner than ANR."));
+    connect(m_nrCombo, QOverload<int>::of(&QComboBox::activated), this,
+            [this](int index) { emit noiseReductionChanged(NoiseReductionMode(index)); });
+
+    m_anfButton = new QPushButton(tr("ANF"), this);
+    m_anfButton->setCheckable(true);
+    m_anfButton->setStyleSheet(kToggleButtonStyle);
+    m_anfButton->setToolTip(tr("Automatic notch filter - finds and removes steady heterodynes/carriers."));
+    connect(m_anfButton, &QPushButton::toggled, this, &ToolbarWidget::autoNotchChanged);
+
+    m_snbButton = new QPushButton(tr("SNB"), this);
+    m_snbButton->setCheckable(true);
+    m_snbButton->setStyleSheet(kToggleButtonStyle);
+    m_snbButton->setToolTip(tr("Spectral noise blanker - a different algorithm from NB/NB2, sometimes "
+                                "better on impulse/burst noise."));
+    connect(m_snbButton, &QPushButton::toggled, this, &ToolbarWidget::spectralNoiseBlankerChanged);
+
     auto *layout = new QHBoxLayout(this);
     layout->addWidget(bandLabel);
     layout->addWidget(m_bandCombo);
@@ -173,6 +209,11 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     layout->addSpacing(16);
     layout->addWidget(nbLabel);
     layout->addWidget(m_nbCombo);
+    layout->addSpacing(16);
+    layout->addWidget(nrLabel);
+    layout->addWidget(m_nrCombo);
+    layout->addWidget(m_anfButton);
+    layout->addWidget(m_snbButton);
 
     setConnected(false);
 }
@@ -243,6 +284,9 @@ void ToolbarWidget::setConnected(bool connected) {
     m_agcCombo->setEnabled(connected);
     m_agcTopSlider->setEnabled(connected);
     m_nbCombo->setEnabled(connected);
+    m_nrCombo->setEnabled(connected);
+    m_anfButton->setEnabled(connected);
+    m_snbButton->setEnabled(connected);
 }
 
 AgcMode ToolbarWidget::agcMode() const { return m_agcCombo ? AgcMode(m_agcCombo->currentIndex()) : AgcMode::Medium; }
@@ -268,5 +312,31 @@ NoiseBlankerMode ToolbarWidget::noiseBlankerMode() const {
 void ToolbarWidget::setNoiseBlankerMode(NoiseBlankerMode mode) {
     if (m_nbCombo) {
         m_nbCombo->setCurrentIndex(int(mode));
+    }
+}
+
+NoiseReductionMode ToolbarWidget::noiseReductionMode() const {
+    return m_nrCombo ? NoiseReductionMode(m_nrCombo->currentIndex()) : NoiseReductionMode::Off;
+}
+
+void ToolbarWidget::setNoiseReductionMode(NoiseReductionMode mode) {
+    if (m_nrCombo) {
+        m_nrCombo->setCurrentIndex(int(mode));
+    }
+}
+
+bool ToolbarWidget::autoNotchEnabled() const { return m_anfButton && m_anfButton->isChecked(); }
+
+void ToolbarWidget::setAutoNotchEnabled(bool enabled) {
+    if (m_anfButton) {
+        m_anfButton->setChecked(enabled);
+    }
+}
+
+bool ToolbarWidget::spectralNoiseBlankerEnabled() const { return m_snbButton && m_snbButton->isChecked(); }
+
+void ToolbarWidget::setSpectralNoiseBlankerEnabled(bool enabled) {
+    if (m_snbButton) {
+        m_snbButton->setChecked(enabled);
     }
 }

@@ -107,6 +107,9 @@ void RxAudioChannel::finishOpen() {
     // zero-initializes it to, which mutes the output.
     setAgcMode(AgcMode::Medium);
     setNoiseBlanker(NoiseBlankerMode::Off);
+    setNoiseReduction(NoiseReductionMode::Off);
+    setAutoNotch(false);
+    setSpectralNoiseBlanker(false);
 
     setMode(RxMode::AM);
     emit opened();
@@ -230,6 +233,52 @@ void RxAudioChannel::setNoiseBlanker(NoiseBlankerMode mode) {
     SetEXTNOBThreshold(m_channel, kThreshold);
     SetEXTNOBMode(m_channel, 0); // NB2 submode ("Zero") - not exposed yet
     SetEXTNOBRun(m_channel, mode == NoiseBlankerMode::Nb2 ? 1 : 0);
+}
+
+void RxAudioChannel::setNoiseReduction(NoiseReductionMode mode) {
+    m_nrMode = mode;
+    if (!m_open) {
+        return;
+    }
+    // Disable both before switching, matching core/deskhpsdr-src/
+    // receiver.c's rx_set_noise() ordering - avoids a transient overlap
+    // where both run briefly during a switch.
+    SetRXAANRRun(m_channel, 0);
+    SetRXAEMNRRun(m_channel, 0);
+    switch (mode) {
+    case NoiseReductionMode::Anr:
+        SetRXAANRVals(m_channel, 64, 16, 16e-4, 10e-7); // deskHPSDR's fixed taps/delay/gain/leakage
+        SetRXAANRPosition(m_channel, 0);                // 0 = pre-AGC, deskHPSDR default
+        SetRXAANRRun(m_channel, 1);
+        break;
+    case NoiseReductionMode::Emnr:
+        SetRXAEMNRPosition(m_channel, 0);   // pre-AGC
+        SetRXAEMNRgainMethod(m_channel, 2); // Gamma, deskHPSDR default
+        SetRXAEMNRnpeMethod(m_channel, 0);  // OSMS, deskHPSDR default
+        SetRXAEMNRaeRun(m_channel, 1);      // Artifact Elimination on, deskHPSDR default
+        SetRXAEMNRpost2Run(m_channel, 0);   // post-processing off, deskHPSDR default
+        SetRXAEMNRRun(m_channel, 1);
+        break;
+    case NoiseReductionMode::Off:
+        break;
+    }
+}
+
+void RxAudioChannel::setAutoNotch(bool enabled) {
+    m_anfEnabled = enabled;
+    if (!m_open) {
+        return;
+    }
+    SetRXAANFPosition(m_channel, 0); // pre-AGC
+    SetRXAANFRun(m_channel, enabled ? 1 : 0);
+}
+
+void RxAudioChannel::setSpectralNoiseBlanker(bool enabled) {
+    m_snbEnabled = enabled;
+    if (!m_open) {
+        return;
+    }
+    SetRXASNBARun(m_channel, enabled ? 1 : 0);
 }
 
 void RxAudioChannel::feedSample(double i, double q) {

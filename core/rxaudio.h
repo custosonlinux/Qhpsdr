@@ -47,6 +47,18 @@ enum class NoiseBlankerMode {
     Nb2 = 2,
 };
 
+// Matches deskHPSDR's rx->nr (core/deskhpsdr-src/receiver.c/noise_menu.c):
+// "NONE"/"NR"/"NR2" - ANR (classic LMS adaptive) vs EMNR (spectral,
+// generally cleaner). deskHPSDR also has NR3/NR4, but those need external
+// libspecbleach/rnnoise this project doesn't vendor (same reason
+// core/wdsp-2.00's sbnr.c/rnnr.c are stubbed out - see
+// WDSP_HAVE_SPECBLEACH/WDSP_HAVE_RNNOISE).
+enum class NoiseReductionMode {
+    Off = 0,
+    Anr = 1,
+    Emnr = 2,
+};
+
 // Qt wrapper around a WDSP RXA receive channel (core/wdsp-2.00), replacing
 // deskHPSDR's WDSP setup in core/deskhpsdr-src/receiver.c (OpenChannel +
 // per-block fexchange0 calls). Feed it normalized I/Q samples one at a
@@ -61,10 +73,10 @@ enum class NoiseBlankerMode {
 // the GUI; isOpen() flips to true and opened() fires once it's done.
 // feedSample() silently drops samples until then.
 //
-// Not yet implemented: squelch, noise reduction (ANR/EMNR - separate from
-// the noise blanker above), NB2's alternate sub-modes, and user-adjustable
-// noise-blanker/AGC-slope parameters (deskHPSDR exposes those via a
-// separate settings dialog this project doesn't have yet).
+// Not yet implemented: squelch, NB2's alternate sub-modes, and
+// user-adjustable noise-blanker/AGC-slope/noise-reduction sub-parameters
+// (deskHPSDR exposes those via a separate settings dialog this project
+// doesn't have yet).
 class RxAudioChannel : public QObject {
     Q_OBJECT
 
@@ -111,6 +123,22 @@ public:
     // closed/opening; feedSample()/processBlock() apply it once open.
     void setNoiseBlanker(NoiseBlankerMode mode);
 
+    // The other three deskHPSDR "QRM fighters" beyond the impulse blanker
+    // above - all live inside RXA itself (created by OpenChannel(), unlike
+    // EXTANB/EXTNOB, so no separate create_*EXT() call is needed) and run
+    // automatically as part of fexchange0()'s existing per-block chain, no
+    // change to processBlock() needed either. Sub-parameters deskHPSDR
+    // exposes via its Noise settings dialog (ANR's taps/delay/gain/
+    // leakage, EMNR's gain/npe method, post-processing, ...) aren't
+    // user-adjustable here yet - applied at deskHPSDR's own defaults.
+    void setNoiseReduction(NoiseReductionMode mode);
+    // Automatic notch filter - finds and removes steady heterodynes/
+    // carriers (deskHPSDR: rx->anf).
+    void setAutoNotch(bool enabled);
+    // Spectral noise blanker - a different algorithm from NB/NB2 above,
+    // better suited to some impulse/burst noise (deskHPSDR: rx->snb).
+    void setSpectralNoiseBlanker(bool enabled);
+
     // i, q normalized to [-1, 1] (e.g. a 24-bit ADC sample / 2^23). No-op
     // while the channel is still opening or closed.
     void feedSample(double i, double q);
@@ -148,6 +176,9 @@ private:
 
     double m_agcTopDb = 80.0; // core/deskhpsdr-src/receiver.c's rx->agc_gain default
     NoiseBlankerMode m_nbMode = NoiseBlankerMode::Off;
+    NoiseReductionMode m_nrMode = NoiseReductionMode::Off;
+    bool m_anfEnabled = false;
+    bool m_snbEnabled = false;
 };
 
 #endif // QHPSDR_RXAUDIO_H
