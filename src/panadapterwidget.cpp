@@ -4,6 +4,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPolygonF>
 #include <cmath>
 
 namespace {
@@ -62,19 +63,13 @@ void PanadapterWidget::setPassband(double lowHz, double highHz) {
     update();
 }
 
-void PanadapterWidget::paintEvent(QPaintEvent *) {
-    QPainter p(this);
+void PanadapterWidget::rebuildGridCache(const QRect &full, const QRect &plot) {
+    m_gridCache = QPixmap(full.size());
+    QPainter p(&m_gridCache);
     p.setRenderHint(QPainter::Antialiasing, false);
-
-    const QRect full = rect();
-    const QRect plot(kLeftMargin, kTopMargin, full.width() - kLeftMargin - 4, full.height() - kTopMargin - 4);
 
     p.fillRect(full, QColor(0x08, 0x10, 0x1a));
     p.fillRect(plot, QColor(0x0d, 0x1b, 0x2a));
-
-    if (plot.width() <= 0 || plot.height() <= 0) {
-        return;
-    }
 
     const double loHz = m_centerHz - m_sampleRateHz / 2.0;
     const double hiHz = m_centerHz + m_sampleRateHz / 2.0;
@@ -110,6 +105,36 @@ void PanadapterWidget::paintEvent(QPaintEvent *) {
                    QString::number(f / 1e6, 'f', 3));
     }
 
+    m_gridCachePlot = plot;
+    m_gridCacheCenterHz = m_centerHz;
+    m_gridCacheSampleRateHz = m_sampleRateHz;
+    m_gridCacheMinDb = m_minDb;
+    m_gridCacheMaxDb = m_maxDb;
+    m_gridCacheValid = true;
+}
+
+void PanadapterWidget::paintEvent(QPaintEvent *) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, false);
+
+    const QRect full = rect();
+    const QRect plot(kLeftMargin, kTopMargin, full.width() - kLeftMargin - 4, full.height() - kTopMargin - 4);
+
+    if (plot.width() <= 0 || plot.height() <= 0) {
+        return;
+    }
+
+    const bool cacheStale = !m_gridCacheValid || m_gridCache.size() != full.size() || m_gridCachePlot != plot ||
+                             m_gridCacheCenterHz != m_centerHz || m_gridCacheSampleRateHz != m_sampleRateHz ||
+                             m_gridCacheMinDb != m_minDb || m_gridCacheMaxDb != m_maxDb;
+    if (cacheStale) {
+        rebuildGridCache(full, plot);
+    }
+    p.drawPixmap(0, 0, m_gridCache);
+
+    const double loHz = m_centerHz - m_sampleRateHz / 2.0;
+    const double hiHz = m_centerHz + m_sampleRateHz / 2.0;
+
     // --- selected passband shading ---------------------------------------
     if (m_passbandHighHz > m_passbandLowHz) {
         const double passLoHz = m_centerHz + m_passbandLowHz;
@@ -139,37 +164,40 @@ void PanadapterWidget::paintEvent(QPaintEvent *) {
     }
 
     // --- spectrum trace ---------------------------------------------------
-    QPainterPath path;
+    // Compute each pixel's (x, y) once and reuse it for both the filled
+    // trace and its outline stroke, instead of running the per-pixel
+    // bin-lookup/yFor loop twice (previously a second, separate
+    // QPainterPath was built from scratch just for the outline).
     const int n = m_spectrum.size();
     auto yFor = [&](float db) {
         const float t = qBound(0.0f, (db - m_minDb) / (m_maxDb - m_minDb), 1.0f);
         return plot.bottom() - t * plot.height();
     };
-    path.moveTo(plot.left(), plot.bottom());
+    QPolygonF topLine(plot.width());
     for (int px = 0; px < plot.width(); ++px) {
         const int bin = qBound(0, int(double(px) / plot.width() * n), n - 1);
-        path.lineTo(plot.left() + px, yFor(m_spectrum[bin]));
+        topLine[px] = QPointF(plot.left() + px, yFor(m_spectrum[bin]));
     }
-    path.lineTo(plot.right(), plot.bottom());
-    path.closeSubpath();
 
-    QLinearGradient fillGrad(0, plot.top(), 0, plot.bottom());
-    fillGrad.setColorAt(0.0, QColor(0xd6, 0xe0, 0x40, 235));
-    fillGrad.setColorAt(0.55, QColor(0x7c, 0xc4, 0x3a, 220));
-    fillGrad.setColorAt(1.0, QColor(0x1a, 0x3a, 0x2a, 60));
+    if (m_fillGradientHeight != plot.height()) {
+        m_fillGradient = QLinearGradient(0, plot.top(), 0, plot.bottom());
+        m_fillGradient.setColorAt(0.0, QColor(0xd6, 0xe0, 0x40, 235));
+        m_fillGradient.setColorAt(0.55, QColor(0x7c, 0xc4, 0x3a, 220));
+        m_fillGradient.setColorAt(1.0, QColor(0x1a, 0x3a, 0x2a, 60));
+        m_fillGradientHeight = plot.height();
+    }
+    QPainterPath fillPath;
+    fillPath.addPolygon(topLine);
+    fillPath.lineTo(plot.right(), plot.bottom());
+    fillPath.lineTo(plot.left(), plot.bottom());
+    fillPath.closeSubpath();
     p.setPen(Qt::NoPen);
-    p.setBrush(fillGrad);
-    p.drawPath(path);
+    p.setBrush(m_fillGradient);
+    p.drawPath(fillPath);
 
     p.setPen(QPen(QColor(0xf2, 0xf6, 0xb0), 1));
     p.setBrush(Qt::NoBrush);
-    QPainterPath outline;
-    outline.moveTo(plot.left(), yFor(m_spectrum[0]));
-    for (int px = 1; px < plot.width(); ++px) {
-        const int bin = qBound(0, int(double(px) / plot.width() * n), n - 1);
-        outline.lineTo(plot.left() + px, yFor(m_spectrum[bin]));
-    }
-    p.drawPath(outline);
+    p.drawPolyline(topLine);
 
     p.setPen(QColor(0x40, 0x60, 0x70));
     p.drawRect(plot.adjusted(0, 0, -1, -1));

@@ -1,6 +1,8 @@
 #ifndef QHPSDR_PANADAPTERWIDGET_H
 #define QHPSDR_PANADAPTERWIDGET_H
 
+#include <QLinearGradient>
+#include <QPixmap>
 #include <QWidget>
 #include <QVector>
 
@@ -39,6 +41,15 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
 
 private:
+    // The dB/frequency grid and their axis labels only depend on the plot
+    // geometry, center frequency, sample rate, and dB range - not on the
+    // spectrum data itself, which arrives many times a second. Redrawing
+    // ~100 grid lines and text labels (expensive on the software rasterizer)
+    // on every incoming spectrum frame was the single largest cost in
+    // paintEvent(); caching them into a QPixmap and only regenerating on an
+    // actual geometry/range/frequency change turns that into a cheap blit.
+    void rebuildGridCache(const QRect &full, const QRect &plot);
+
     QVector<float> m_spectrum;
     double m_centerHz = 7100000.0;
     double m_sampleRateHz = 48000.0;
@@ -46,6 +57,20 @@ private:
     float m_maxDb = -20.0f;
     double m_passbandLowHz = 0.0;
     double m_passbandHighHz = 0.0;
+
+    QPixmap m_gridCache;
+    QRect m_gridCachePlot;
+    double m_gridCacheCenterHz = 0.0;
+    double m_gridCacheSampleRateHz = 0.0;
+    float m_gridCacheMinDb = 0.0f;
+    float m_gridCacheMaxDb = 0.0f;
+    bool m_gridCacheValid = false;
+
+    // Reused across paintEvent() calls so the QLinearGradient (and its
+    // Qt-internal color-ramp cache) is only rebuilt when the plot height
+    // actually changes, not on every frame.
+    QLinearGradient m_fillGradient;
+    int m_fillGradientHeight = -1;
 };
 
 #endif // QHPSDR_PANADAPTERWIDGET_H
