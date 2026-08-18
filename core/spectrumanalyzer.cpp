@@ -27,7 +27,19 @@ SpectrumAnalyzer::~SpectrumAnalyzer() {
 }
 
 void SpectrumAnalyzer::feedSample(double i, double q) {
-    m_buffer[size_t(m_fillCount)] = {float(i), float(q)};
+    // I/Q swapped, not {i, q} - matches core/wdsp-2.00/analyzer.c's
+    // Spectrum0(): "Ipointer[n] = pbuff[2n+1]; Qpointer[n] = pbuff[2n+0];"
+    // against an iq_input_buffer packed as [i,q,i,q,...] (see
+    // core/deskhpsdr-src/receiver.c's rx_add_iq_samples()). WDSP's own
+    // analyzer - what real deskHPSDR's panadapter runs on - deliberately
+    // feeds its FFT the opposite sense from what SetRXAMode's demodulator
+    // gets, to correctly orient the display against real HPSDR hardware's
+    // baseband sign convention. Confirmed via hpsdrsim.c's synthetic test
+    // tone (do_tone: off=signal_freq-tuned_freq, tonedelta=-2*pi*off/fs,
+    // i.e. a signal ABOVE the tuned frequency produces a NEGATIVE baseband
+    // frequency on the wire) - the "textbook" downconversion sign this
+    // analyzer originally assumed is backwards for this hardware.
+    m_buffer[size_t(m_fillCount)] = {float(q), float(i)};
     if (++m_fillCount >= kFftSize) {
         computeFrame();
         m_fillCount = 0;
