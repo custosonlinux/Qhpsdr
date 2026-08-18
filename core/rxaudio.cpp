@@ -32,6 +32,7 @@ void RxAudioChannel::open(int channel, int inputSampleRate) {
     close();
 
     m_channel = channel;
+    m_inputSampleRate = inputSampleRate;
     m_inBuffer.assign(2 * kBlockSize, 0.0);
     m_outBuffer.assign(2 * kBlockSize, 0.0);
     m_fillCount = 0;
@@ -79,6 +80,18 @@ void RxAudioChannel::finishOpen() {
         return;
     }
 
+    // Unlike RXA (created by OpenChannel() above), WDSP's EXTANB/EXTNOB
+    // (the noise blanker) need their own separate creation call before any
+    // Set*/x*EXT call touches them - core/deskhpsdr-src/receiver.c calls
+    // both right after OpenChannel(), with these exact literal defaults
+    // (immediately overridden by setNoiseBlanker() below via
+    // rx_set_noise()'s real Tau/Hangtime/Advtime/Threshold values -
+    // "backtau" has no runtime setter and keeps whatever's passed here).
+    // Without this, setNoiseBlanker()'s Set* calls dereference an
+    // uninitialized ANB/NOB pointer and crash.
+    create_anbEXT(m_channel, 1, kBlockSize, m_inputSampleRate, 0.0001, 0.0001, 0.0001, 0.05, 20);
+    create_nobEXT(m_channel, 1, 0, kBlockSize, m_inputSampleRate, 0.0001, 0.0001, 0.0001, 0.05, 20);
+
     // setMode() below is a no-op while m_open is still false, so this must
     // come before any Set* calls that need to take effect immediately.
     m_open = true;
@@ -110,6 +123,8 @@ void RxAudioChannel::close() {
         return;
     }
     CloseChannel(m_channel);
+    destroy_anbEXT(m_channel);
+    destroy_nobEXT(m_channel);
     m_open = false;
 }
 

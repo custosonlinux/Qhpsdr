@@ -344,6 +344,10 @@ void MainWindow::showDiscoveryDialog() {
         return;
     }
 
+    connectToDevice(device);
+}
+
+void MainWindow::connectToDevice(const DiscoveredDevice &device) {
     disconnectFromRadio();
 
     // No parent on any of these four: QObject::moveToThread() refuses

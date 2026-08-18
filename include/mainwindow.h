@@ -5,6 +5,7 @@
 #include <QMap>
 #include <QVector>
 
+struct DiscoveredDevice;
 class OldProtocolConnection;
 class RxAudioChannel;
 class SpectrumAnalyzer;
@@ -42,6 +43,12 @@ private slots:
     void disconnectFromRadio();
 
 private:
+    // Tears down any existing connection and sets up a fresh one to
+    // device - the actual connect logic, factored out of
+    // showDiscoveryDialog() so it doesn't require going through the
+    // modal dialog (e.g. for testing against hpsdrsim without a GUI click).
+    void connectToDevice(const DiscoveredDevice &device);
+
     // Runs on m_workerThread (writes to QAudioSink, which can block).
     void playAudioBlock(const QVector<float> &interleavedStereo);
     void repaintDisplays();

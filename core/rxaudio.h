@@ -139,6 +139,7 @@ private:
     bool m_opening = false;
     bool m_closePending = false;
     int m_channel = 0;
+    int m_inputSampleRate = 48000; // set by open(); create_anbEXT()/create_nobEXT() need it in finishOpen()
     static constexpr int kBlockSize = 1024; // matches deskHPSDR's default rx->buffer_size
 
     std::vector<double> m_inBuffer;  // interleaved I/Q, 2*kBlockSize doubles
