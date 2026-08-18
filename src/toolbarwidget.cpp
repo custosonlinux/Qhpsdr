@@ -188,6 +188,23 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
                                 "better on impulse/burst noise."));
     connect(m_snbButton, &QPushButton::toggled, this, &ToolbarWidget::spectralNoiseBlankerChanged);
 
+    auto *nr4SmoothLabel = new QLabel(tr("NR4 Smooth"), this);
+    nr4SmoothLabel->setStyleSheet(kDarkLabelStyle);
+    m_nr4SmoothSlider = new QSlider(Qt::Horizontal, this);
+    m_nr4SmoothSlider->setStyleSheet(kSliderStyle);
+    m_nr4SmoothSlider->setRange(0, 100);
+    m_nr4SmoothSlider->setValue(0);
+    m_nr4SmoothValueLabel = new QLabel(tr("0%"), this);
+    m_nr4SmoothValueLabel->setStyleSheet(kDarkLabelStyle);
+    m_nr4SmoothValueLabel->setMinimumWidth(36);
+    m_nr4SmoothSlider->setToolTip(
+        tr("NR4's frame-to-frame smoothing. 0% (deskHPSDR's default) can sound choppy/jittery - "
+           "raising it trades that for a more diffuse/smeared sound."));
+    connect(m_nr4SmoothSlider, &QSlider::valueChanged, this, [this](int value) {
+        m_nr4SmoothValueLabel->setText(tr("%1%").arg(value));
+        emit nr4SmoothingChanged(double(value));
+    });
+
     auto *layout = new QHBoxLayout(this);
     layout->addWidget(bandLabel);
     layout->addWidget(m_bandCombo);
@@ -215,6 +232,10 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     layout->addWidget(m_nrCombo);
     layout->addWidget(m_anfButton);
     layout->addWidget(m_snbButton);
+    layout->addSpacing(8);
+    layout->addWidget(nr4SmoothLabel);
+    layout->addWidget(m_nr4SmoothSlider, /*stretch=*/1);
+    layout->addWidget(m_nr4SmoothValueLabel);
 
     setConnected(false);
 }
@@ -288,6 +309,7 @@ void ToolbarWidget::setConnected(bool connected) {
     m_nrCombo->setEnabled(connected);
     m_anfButton->setEnabled(connected);
     m_snbButton->setEnabled(connected);
+    m_nr4SmoothSlider->setEnabled(connected);
 }
 
 AgcMode ToolbarWidget::agcMode() const { return m_agcCombo ? AgcMode(m_agcCombo->currentIndex()) : AgcMode::Medium; }
@@ -339,5 +361,15 @@ bool ToolbarWidget::spectralNoiseBlankerEnabled() const { return m_snbButton && 
 void ToolbarWidget::setSpectralNoiseBlankerEnabled(bool enabled) {
     if (m_snbButton) {
         m_snbButton->setChecked(enabled);
+    }
+}
+
+double ToolbarWidget::nr4SmoothingFactor() const {
+    return m_nr4SmoothSlider ? double(m_nr4SmoothSlider->value()) : 0.0;
+}
+
+void ToolbarWidget::setNr4SmoothingFactor(double percent) {
+    if (m_nr4SmoothSlider) {
+        m_nr4SmoothSlider->setValue(int(percent));
     }
 }

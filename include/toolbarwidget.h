@@ -99,6 +99,13 @@ public:
     bool spectralNoiseBlankerEnabled() const;
     void setSpectralNoiseBlankerEnabled(bool enabled);
 
+    // NR4 (libspecbleach)'s frame-to-frame smoothing, 0-100% - see
+    // RxAudioChannel::setNr4SmoothingFactor(). deskHPSDR defaults this to
+    // 0 (no smoothing, can sound choppy/jittery); raising it trades that
+    // for a more diffuse/smeared sound.
+    double nr4SmoothingFactor() const;
+    void setNr4SmoothingFactor(double percent);
+
 signals:
     // Band picked from the combo, by index (matching
     // bandIndexForFrequency()) plus that band's center frequency - the
@@ -118,6 +125,7 @@ signals:
     void noiseReductionChanged(NoiseReductionMode mode);
     void autoNotchChanged(bool enabled);
     void spectralNoiseBlankerChanged(bool enabled);
+    void nr4SmoothingChanged(double percent);
 
 private:
     QComboBox *m_bandCombo = nullptr;
@@ -133,6 +141,8 @@ private:
     QComboBox *m_nrCombo = nullptr;
     QPushButton *m_anfButton = nullptr;
     QPushButton *m_snbButton = nullptr;
+    QSlider *m_nr4SmoothSlider = nullptr;
+    QLabel *m_nr4SmoothValueLabel = nullptr;
 };
 
 #endif // QHPSDR_TOOLBARWIDGET_H

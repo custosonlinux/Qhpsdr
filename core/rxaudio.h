@@ -136,6 +136,15 @@ public:
     // leakage, EMNR's gain/npe method, post-processing, ...) aren't
     // user-adjustable here yet - applied at deskHPSDR's own defaults.
     void setNoiseReduction(NoiseReductionMode mode);
+
+    // NR4 (libspecbleach)'s frame-to-frame smoothing, 0-100%. deskHPSDR
+    // defaults this to 0 (no smoothing), which can sound choppy/jittery -
+    // "musical noise" from the gain envelope changing abruptly between
+    // spectral frames. Raising it trades some of that artifact for a more
+    // diffuse/smeared sound. Takes effect immediately regardless of
+    // whether NR4 is the currently-selected mode.
+    void setNr4SmoothingFactor(double percent);
+
     // Automatic notch filter - finds and removes steady heterodynes/
     // carriers (deskHPSDR: rx->anf).
     void setAutoNotch(bool enabled);
@@ -181,6 +190,7 @@ private:
     double m_agcTopDb = 80.0; // core/deskhpsdr-src/receiver.c's rx->agc_gain default
     NoiseBlankerMode m_nbMode = NoiseBlankerMode::Off;
     NoiseReductionMode m_nrMode = NoiseReductionMode::Off;
+    double m_nr4SmoothingFactor = 0.0; // core/deskhpsdr-src/receiver.c's rx->nr4_smoothing_factor default
     bool m_anfEnabled = false;
     bool m_snbEnabled = false;
 };

@@ -269,9 +269,9 @@ void RxAudioChannel::setNoiseReduction(NoiseReductionMode mode) {
         SetRXARNNRRun(m_channel, 1);
         break;
     case NoiseReductionMode::Sbnr:
-        SetRXASBNRPosition(m_channel, 0);                  // pre-AGC
-        SetRXASBNRreductionAmount(m_channel, 10.0f);        // deskHPSDR defaults
-        SetRXASBNRsmoothingFactor(m_channel, 0.0f);
+        SetRXASBNRPosition(m_channel, 0);           // pre-AGC
+        SetRXASBNRreductionAmount(m_channel, 10.0f); // deskHPSDR defaults
+        SetRXASBNRsmoothingFactor(m_channel, float(m_nr4SmoothingFactor));
         SetRXASBNRwhiteningFactor(m_channel, 0.0f);
         SetRXASBNRnoiseRescale(m_channel, 2.0f);
         SetRXASBNRpostFilterThreshold(m_channel, -10.0f);
@@ -279,6 +279,13 @@ void RxAudioChannel::setNoiseReduction(NoiseReductionMode mode) {
         break;
     case NoiseReductionMode::Off:
         break;
+    }
+}
+
+void RxAudioChannel::setNr4SmoothingFactor(double percent) {
+    m_nr4SmoothingFactor = percent;
+    if (m_open) {
+        SetRXASBNRsmoothingFactor(m_channel, float(percent));
     }
 }
 

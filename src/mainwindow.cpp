@@ -173,6 +173,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 m_rxAudio, [this, enabled]() { m_rxAudio->setSpectralNoiseBlanker(enabled); }, Qt::QueuedConnection);
         }
     });
+    connect(m_toolbar, &ToolbarWidget::nr4SmoothingChanged, this, [this](double percent) {
+        if (m_rxAudio) {
+            QMetaObject::invokeMethod(
+                m_rxAudio, [this, percent]() { m_rxAudio->setNr4SmoothingFactor(percent); }, Qt::QueuedConnection);
+        }
+    });
 
     m_spectrum = new SpectrumAnalyzer(this);
     connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {
@@ -296,6 +302,7 @@ void MainWindow::saveSettings() {
     settings.setValue(QStringLiteral("noiseReductionMode"), int(m_toolbar->noiseReductionMode()));
     settings.setValue(QStringLiteral("autoNotchEnabled"), m_toolbar->autoNotchEnabled());
     settings.setValue(QStringLiteral("spectralNoiseBlankerEnabled"), m_toolbar->spectralNoiseBlankerEnabled());
+    settings.setValue(QStringLiteral("nr4SmoothingFactor"), m_toolbar->nr4SmoothingFactor());
     settings.endGroup();
 
     settings.beginWriteArray(QStringLiteral("bandstack"));
@@ -336,6 +343,7 @@ void MainWindow::loadSettings() {
     m_toolbar->setAutoNotchEnabled(settings.value(QStringLiteral("autoNotchEnabled"), false).toBool());
     m_toolbar->setSpectralNoiseBlankerEnabled(
         settings.value(QStringLiteral("spectralNoiseBlankerEnabled"), false).toBool());
+    m_toolbar->setNr4SmoothingFactor(settings.value(QStringLiteral("nr4SmoothingFactor"), 0.0).toDouble());
     settings.endGroup();
 
     m_bandStack.clear();
@@ -421,12 +429,16 @@ void MainWindow::connectToDevice(const DiscoveredDevice &device) {
         const NoiseReductionMode nrMode = m_toolbar->noiseReductionMode();
         const bool anfEnabled = m_toolbar->autoNotchEnabled();
         const bool snbEnabled = m_toolbar->spectralNoiseBlankerEnabled();
+        const double nr4Smoothing = m_toolbar->nr4SmoothingFactor();
         QMetaObject::invokeMethod(
             m_rxAudio,
-            [this, agcMode, agcTop, nbMode, nrMode, anfEnabled, snbEnabled]() {
+            [this, agcMode, agcTop, nbMode, nrMode, anfEnabled, snbEnabled, nr4Smoothing]() {
                 m_rxAudio->setAgcMode(agcMode);
                 m_rxAudio->setAgcTop(agcTop);
                 m_rxAudio->setNoiseBlanker(nbMode);
+                // Before setNoiseReduction(): if nrMode is Sbnr, its branch
+                // reads the smoothing value already stored on m_rxAudio.
+                m_rxAudio->setNr4SmoothingFactor(nr4Smoothing);
                 m_rxAudio->setNoiseReduction(nrMode);
                 m_rxAudio->setAutoNotch(anfEnabled);
                 m_rxAudio->setSpectralNoiseBlanker(snbEnabled);
