@@ -5,10 +5,12 @@
 #include <QComboBox>
 #include <QFont>
 #include <QGridLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
 #include <QIntValidator>
+#include <QMouseEvent>
 #include <QPalette>
 #include <QProgressBar>
 #include <QSpinBox>
@@ -36,7 +38,102 @@ constexpr ModeEntry kModes[] = {
     {RxMode::SPEC, "SPEC"}, {RxMode::DIGL, "DIGL"}, {RxMode::SAM, "SAM"}, {RxMode::DRM, "DRM"},
 };
 
+// kSteps index whose value is exactly 10^place, or -1 if there isn't one
+// (there is, for every place from 0/1Hz to 6/1MHz - kSteps just also has
+// some non-decade entries like 25/50/250/... in between).
+int stepIndexForPlaceValue(int place) {
+    qint64 target = 1;
+    for (int i = 0; i < place; ++i) {
+        target *= 10;
+    }
+    for (int i = 0; i < kStepCount; ++i) {
+        if (kSteps[i] == target) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Which power-of-ten place (0 = units, 3 = thousands, ...) the digit
+// nearest character index chIdx belongs to, in a QLocale-grouped string
+// like "7.120.000" - counts digits (skipping grouping separators) to the
+// right of the nearest actual digit character. Returns -1 for empty text.
+int placeValueForCharIndex(const QString &text, int chIdx) {
+    if (text.isEmpty()) {
+        return -1;
+    }
+    chIdx = qBound(0, chIdx, text.length() - 1);
+    int idx = chIdx;
+    while (idx < text.length() && !text.at(idx).isDigit()) {
+        ++idx;
+    }
+    if (idx >= text.length()) {
+        idx = chIdx;
+        while (idx >= 0 && !text.at(idx).isDigit()) {
+            --idx;
+        }
+    }
+    if (idx < 0) {
+        return -1;
+    }
+    int digitsToRight = 0;
+    for (int j = idx + 1; j < text.length(); ++j) {
+        if (text.at(j).isDigit()) {
+            ++digitsToRight;
+        }
+    }
+    return digitsToRight;
+}
+
+// Inverse of placeValueForCharIndex(): the character index of the digit
+// whose place value is `place`, or -1 if text doesn't have that many
+// digits.
+int charIndexForPlaceValue(const QString &text, int place) {
+    int digitsToRight = 0;
+    for (int j = text.length() - 1; j >= 0; --j) {
+        if (text.at(j).isDigit()) {
+            if (digitsToRight == place) {
+                return j;
+            }
+            ++digitsToRight;
+        }
+    }
+    return -1;
+}
+
 } // namespace
+
+// Forwards mouse clicks and Up/Down key presses to VfoPanel for
+// digit-click tuning (see VfoPanel::onFreqDigitClicked()/
+// stepFrequencyByDigit()) - defined here rather than in the header since
+// it adds no new signals/slots (just overrides existing virtuals), so it
+// doesn't need Q_OBJECT/moc processing.
+class FrequencyLineEdit : public QLineEdit {
+public:
+    FrequencyLineEdit(VfoPanel *owner, QWidget *parent) : QLineEdit(parent), m_owner(owner) {}
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override {
+        const int charIndex = cursorPositionAt(event->pos());
+        QLineEdit::mousePressEvent(event);
+        m_owner->onFreqDigitClicked(charIndex);
+    }
+
+    void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Up) {
+            m_owner->stepFrequencyByDigit(+1);
+            return;
+        }
+        if (event->key() == Qt::Key_Down) {
+            m_owner->stepFrequencyByDigit(-1);
+            return;
+        }
+        QLineEdit::keyPressEvent(event);
+    }
+
+private:
+    VfoPanel *m_owner;
+};
 
 namespace {
 // Amber-on-black LCD look, styled after deskHPSDR's VFO "A:" frequency
@@ -49,6 +146,8 @@ const char *const kFreqEditStyle =
     "  border: 1px solid #6b4108;"
     "  border-radius: 4px;"
     "  padding: 2px 10px;"
+    "  selection-background-color: #ffe680;"
+    "  selection-color: #14100a;"
     "}"
     "QLineEdit:disabled {"
     "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
@@ -80,7 +179,7 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     pal.setColor(QPalette::Window, QColor(0x0a, 0x0e, 0x13));
     setPalette(pal);
 
-    m_freqEdit = new QLineEdit(this);
+    m_freqEdit = new FrequencyLineEdit(this, this);
     m_freqEdit->setValidator(new QIntValidator(0, 999999999, m_freqEdit));
     QFont freqFont("monospace");
     freqFont.setStyleHint(QFont::Monospace);
@@ -180,6 +279,41 @@ void VfoPanel::setFrequencyHz(double hz) {
 
 void VfoPanel::updateFrequencyDisplay() {
     m_freqEdit->setText(QLocale::system().toString(qint64(m_frequencyHz)));
+    highlightSelectedDigit();
+}
+
+void VfoPanel::onFreqDigitClicked(int charIndex) {
+    const int place = placeValueForCharIndex(m_freqEdit->text(), charIndex);
+    if (place < 0) {
+        return;
+    }
+    m_selectedDigitPlace = place;
+    const int stepIdx = stepIndexForPlaceValue(place);
+    if (stepIdx >= 0) {
+        m_stepCombo->setCurrentIndex(stepIdx);
+    }
+    highlightSelectedDigit();
+}
+
+void VfoPanel::stepFrequencyByDigit(int direction) {
+    const int stepIdx = qBound(0, m_stepCombo->currentIndex(), kStepCount - 1);
+    const qint64 step = kSteps[stepIdx];
+    m_frequencyHz += double(direction) * double(step);
+    if (m_frequencyHz < 0) {
+        m_frequencyHz = 0;
+    }
+    updateFrequencyDisplay();
+    emit frequencyEditedHz(m_frequencyHz);
+}
+
+void VfoPanel::highlightSelectedDigit() {
+    if (!m_freqEdit->hasFocus()) {
+        return;
+    }
+    const int idx = charIndexForPlaceValue(m_freqEdit->text(), m_selectedDigitPlace);
+    if (idx >= 0) {
+        m_freqEdit->setSelection(idx, 1);
+    }
 }
 
 void VfoPanel::setRxMode(RxMode mode) {

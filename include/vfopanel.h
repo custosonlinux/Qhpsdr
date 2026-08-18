@@ -10,6 +10,7 @@ class QComboBox;
 class QProgressBar;
 class QLabel;
 class QSpinBox;
+class FrequencyLineEdit;
 
 // Minimal VFO panel: frequency readout/entry, mode + tuning-step + filter
 // selectors, and an (uncalibrated) signal level meter. Functionally
@@ -58,11 +59,22 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
 
 private:
+    friend class FrequencyLineEdit;
+
     void updateFrequencyDisplay();
     void onFrequencyEditingFinished();
     void onModeComboChanged(int index);
     void onFilterComboChanged(int index);
     void repopulateFilterCombo();
+    // Digit-click tuning (FrequencyLineEdit, defined in vfopanel.cpp,
+    // forwards mouse/key events here): clicking a digit in the frequency
+    // readout highlights it and sets the Step combo to that digit's place
+    // value; Up/Down then steps the frequency by whatever the Step combo
+    // currently holds - the same single step value wheelEvent() already
+    // uses, just two more ways to drive it.
+    void onFreqDigitClicked(int charIndex);
+    void stepFrequencyByDigit(int direction);
+    void highlightSelectedDigit();
 
     QLineEdit *m_freqEdit = nullptr;
     QComboBox *m_modeCombo = nullptr;
@@ -76,6 +88,10 @@ private:
     // Actual initial value is set in the constructor from
     // defaultModeForFrequency(m_frequencyHz) - see core/filtertable.h.
     RxMode m_mode = RxMode::LSB;
+    // Power-of-ten place of the currently digit-click-selected/highlighted
+    // digit (0 = units/1Hz, 3 = thousands/1kHz, ...) - matches
+    // kDefaultStepIndex's 1kHz step until the user clicks a digit.
+    int m_selectedDigitPlace = 3;
 };
 
 #endif // QHPSDR_VFOPANEL_H
