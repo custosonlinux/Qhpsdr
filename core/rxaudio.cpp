@@ -240,11 +240,16 @@ void RxAudioChannel::setNoiseReduction(NoiseReductionMode mode) {
     if (!m_open) {
         return;
     }
-    // Disable both before switching, matching core/deskhpsdr-src/
+    // Disable all four before switching, matching core/deskhpsdr-src/
     // receiver.c's rx_set_noise() ordering - avoids a transient overlap
-    // where both run briefly during a switch.
+    // where more than one runs briefly during a switch. Harmless no-ops
+    // for RNNR/SBNR if WDSP_HAVE_RNNOISE/WDSP_HAVE_SPECBLEACH weren't
+    // defined at build time (see CMakeLists.txt) - sbnr.c/rnnr.c's run
+    // flag still exists, it just never does anything with it.
     SetRXAANRRun(m_channel, 0);
     SetRXAEMNRRun(m_channel, 0);
+    SetRXARNNRRun(m_channel, 0);
+    SetRXASBNRRun(m_channel, 0);
     switch (mode) {
     case NoiseReductionMode::Anr:
         SetRXAANRVals(m_channel, 64, 16, 16e-4, 10e-7); // deskHPSDR's fixed taps/delay/gain/leakage
@@ -258,6 +263,19 @@ void RxAudioChannel::setNoiseReduction(NoiseReductionMode mode) {
         SetRXAEMNRaeRun(m_channel, 1);      // Artifact Elimination on, deskHPSDR default
         SetRXAEMNRpost2Run(m_channel, 0);   // post-processing off, deskHPSDR default
         SetRXAEMNRRun(m_channel, 1);
+        break;
+    case NoiseReductionMode::Rnnr:
+        SetRXARNNRPosition(m_channel, 0); // pre-AGC
+        SetRXARNNRRun(m_channel, 1);
+        break;
+    case NoiseReductionMode::Sbnr:
+        SetRXASBNRPosition(m_channel, 0);                  // pre-AGC
+        SetRXASBNRreductionAmount(m_channel, 10.0f);        // deskHPSDR defaults
+        SetRXASBNRsmoothingFactor(m_channel, 0.0f);
+        SetRXASBNRwhiteningFactor(m_channel, 0.0f);
+        SetRXASBNRnoiseRescale(m_channel, 2.0f);
+        SetRXASBNRpostFilterThreshold(m_channel, -10.0f);
+        SetRXASBNRRun(m_channel, 1);
         break;
     case NoiseReductionMode::Off:
         break;

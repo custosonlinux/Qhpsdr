@@ -47,16 +47,20 @@ enum class NoiseBlankerMode {
     Nb2 = 2,
 };
 
-// Matches deskHPSDR's rx->nr (core/deskhpsdr-src/receiver.c/noise_menu.c):
-// "NONE"/"NR"/"NR2" - ANR (classic LMS adaptive) vs EMNR (spectral,
-// generally cleaner). deskHPSDR also has NR3/NR4, but those need external
-// libspecbleach/rnnoise this project doesn't vendor (same reason
-// core/wdsp-2.00's sbnr.c/rnnr.c are stubbed out - see
-// WDSP_HAVE_SPECBLEACH/WDSP_HAVE_RNNOISE).
+// Matches deskHPSDR's rx->nr (core/deskhpsdr-src/receiver.c/noise_menu.c)
+// 1:1, including the numeric values: "NONE"/"NR"/"NR2"/"NR3"/"NR4". ANR is
+// the classic LMS adaptive filter; EMNR is spectral, generally cleaner;
+// NR3 (RNNoise, a small recurrent neural net) and NR4 (libspecbleach,
+// spectral) are the two that need external libraries - see
+// WDSP_HAVE_RNNOISE/WDSP_HAVE_SPECBLEACH in CMakeLists.txt, which link
+// them if present at configure time and leave sbnr.c/rnnr.c as inert
+// passthroughs otherwise.
 enum class NoiseReductionMode {
     Off = 0,
     Anr = 1,
     Emnr = 2,
+    Rnnr = 3,
+    Sbnr = 4,
 };
 
 // Qt wrapper around a WDSP RXA receive channel (core/wdsp-2.00), replacing

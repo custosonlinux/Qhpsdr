@@ -11,15 +11,16 @@ qt_standard_project_setup()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFTW3F REQUIRED IMPORTED_TARGET fftw3f)
 pkg_check_modules(FFTW3 REQUIRED IMPORTED_TARGET fftw3)
+# NR3 (RNNoise) / NR4 (libspecbleach) - both optional. If either isn't
+# installed, its half of sbnr.c/rnnr.c stays an inert passthrough (see the
+# WDSP_HAVE_SPECBLEACH / WDSP_HAVE_RNNOISE guards there) rather than
+# failing the whole build.
+pkg_check_modules(RNNOISE IMPORTED_TARGET rnnoise)
+pkg_check_modules(LIBSPECBLEACH IMPORTED_TARGET libspecbleach)
 
 include_directories(include core core/wdsp-2.00)
 
-# WDSP (core/wdsp-2.00): framework-agnostic DSP engine, built as-is except
-# for two vendored noise-reduction modules (sbnr.c/rnnr.c) that normally
-# link against external libspecbleach/RNNoise libraries. Those aren't wired
-# up yet, so NR3/NR4 compile as inert passthroughs (see the
-# WDSP_HAVE_SPECBLEACH / WDSP_HAVE_RNNOISE guards in sbnr.c/h, rnnr.c/h) -
-# define both and link the real libraries to enable them.
+# WDSP (core/wdsp-2.00): framework-agnostic DSP engine, built as-is.
 file(GLOB WDSP_SOURCES CONFIGURE_DEPENDS core/wdsp-2.00/*.c)
 # make_calculus/make_interface/make_zetahat are standalone lookup-table
 # generator tools (each has its own int main()), not part of the library.
@@ -28,6 +29,14 @@ list(FILTER WDSP_SOURCES EXCLUDE REGEX ".*/(make_calculus|make_interface|make_ze
 add_library(wdsp STATIC ${WDSP_SOURCES})
 target_compile_definitions(wdsp PRIVATE _GNU_SOURCE)
 target_link_libraries(wdsp PUBLIC PkgConfig::FFTW3F PkgConfig::FFTW3 m pthread)
+if(RNNOISE_FOUND)
+    target_compile_definitions(wdsp PRIVATE WDSP_HAVE_RNNOISE)
+    target_link_libraries(wdsp PUBLIC PkgConfig::RNNOISE)
+endif()
+if(LIBSPECBLEACH_FOUND)
+    target_compile_definitions(wdsp PRIVATE WDSP_HAVE_SPECBLEACH)
+    target_link_libraries(wdsp PUBLIC PkgConfig::LIBSPECBLEACH)
+endif()
 
 # Qt application shell.
 #

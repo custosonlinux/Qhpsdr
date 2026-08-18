@@ -166,11 +166,12 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     nrLabel->setStyleSheet(kDarkLabelStyle);
     m_nrCombo = new QComboBox(this);
     m_nrCombo->setStyleSheet(kComboStyle);
-    for (const char *label : {"NR Off", "ANR", "EMNR"}) {
+    for (const char *label : {"NR Off", "ANR", "EMNR", "NR3", "NR4"}) {
         m_nrCombo->addItem(QString::fromLatin1(label));
     }
     m_nrCombo->setToolTip(tr("Noise reduction (broadband noise, not impulse noise - see NB for that). "
-                              "EMNR is generally cleaner than ANR."));
+                              "EMNR is generally cleaner than ANR; NR3 (RNNoise) and NR4 (libspecbleach) "
+                              "are newer AI/spectral algorithms worth comparing on real conditions."));
     connect(m_nrCombo, QOverload<int>::of(&QComboBox::activated), this,
             [this](int index) { emit noiseReductionChanged(NoiseReductionMode(index)); });
 
