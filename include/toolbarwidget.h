@@ -36,6 +36,16 @@ public:
     // reference rather than trust the uncalibrated default.
     double rfGainDb() const;
 
+    // Panadapter/waterfall zoom: 1/2/4/8/16 - how much of the full
+    // received span (the hardware's sample rate) is actually displayed,
+    // centered on the tuned frequency. E.g. 4x on a 48kHz-wide receive
+    // shows a 12kHz-wide slice, stretched across the same widget width -
+    // see MainWindow::repaintDisplays(). Loosely modeled on deskHPSDR's
+    // rx->zoom (core/deskhpsdr-src/receiver.c's rx_update_zoom()), but
+    // without its separate manual-pan step: this always centers on the
+    // current tuned frequency, panning implicitly as you retune.
+    int zoomFactor() const;
+
 signals:
     // Band picked from the combo - just a frequency to tune to (band
     // center), not a full band-state change (filters/antenna aren't
@@ -52,6 +62,7 @@ private:
     QLabel *m_afGainValueLabel = nullptr;
     QSlider *m_rfGainSlider = nullptr;
     QLabel *m_rfGainValueLabel = nullptr;
+    QComboBox *m_zoomCombo = nullptr;
 };
 
 #endif // QHPSDR_TOOLBARWIDGET_H

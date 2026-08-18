@@ -103,6 +103,15 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
         m_rfGainValueLabel->setText(tr("%1 dB").arg(value));
     });
 
+    auto *zoomLabel = new QLabel(tr("Zoom"), this);
+    zoomLabel->setStyleSheet(kDarkLabelStyle);
+    m_zoomCombo = new QComboBox(this);
+    m_zoomCombo->setStyleSheet(kComboStyle);
+    for (int z : {1, 2, 4, 8, 16}) {
+        m_zoomCombo->addItem(tr("%1x").arg(z), z);
+    }
+    m_zoomCombo->setToolTip(tr("Panadapter/waterfall zoom, centered on the tuned frequency."));
+
     auto *layout = new QHBoxLayout(this);
     layout->addWidget(bandLabel);
     layout->addWidget(m_bandCombo);
@@ -114,11 +123,18 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     layout->addWidget(rfLabel);
     layout->addWidget(m_rfGainSlider, /*stretch=*/1);
     layout->addWidget(m_rfGainValueLabel);
+    layout->addSpacing(16);
+    layout->addWidget(zoomLabel);
+    layout->addWidget(m_zoomCombo);
 
     setConnected(false);
 }
 
 double ToolbarWidget::rfGainDb() const { return m_rfGainSlider ? double(m_rfGainSlider->value()) : 0.0; }
+
+int ToolbarWidget::zoomFactor() const {
+    return m_zoomCombo ? m_zoomCombo->currentData().toInt() : 1;
+}
 
 void ToolbarWidget::setFrequencyHz(double hz) {
     for (int i = 0; i < int(sizeof(kBands) / sizeof(kBands[0])); ++i) {

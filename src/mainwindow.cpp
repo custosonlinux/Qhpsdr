@@ -150,16 +150,33 @@ void MainWindow::repaintDisplays() {
     }
     m_spectrumDirty = false;
 
+    // Zoom: show only the center slice of the full received span, stretched
+    // across the same widget width - see ToolbarWidget::zoomFactor(). Both
+    // widgets stay entirely zoom-unaware: they just draw whatever spectrum
+    // array + sample rate they're given, so cropping here is the only
+    // change needed.
+    const int zoom = qBound(1, m_toolbar->zoomFactor(), m_latestSpectrum.isEmpty() ? 1 : m_latestSpectrum.size());
+    QVector<float> displaySpectrum = m_latestSpectrum;
+    double displaySampleRateHz = 48000.0;
+    if (zoom > 1 && !displaySpectrum.isEmpty()) {
+        const int n = displaySpectrum.size();
+        const int cropped = std::max(1, n / zoom);
+        const int start = (n - cropped) / 2;
+        displaySpectrum = displaySpectrum.mid(start, cropped);
+        displaySampleRateHz = 48000.0 / zoom;
+    }
+
     // Auto-scale the displayed dB range to the actual incoming data
     // instead of a fixed guess: real receive levels vary a lot with
     // antenna/band/AGC settings, and a fixed range that doesn't match
     // what's actually there just looks like flat "mush" with no visible
     // contrast, even though the underlying spectrum is fine. Smoothed
-    // (not snapped per-frame) so the display doesn't jitter.
-    if (!m_latestSpectrum.isEmpty()) {
-        float frameMin = m_latestSpectrum[0];
-        float frameMax = m_latestSpectrum[0];
-        for (float v : m_latestSpectrum) {
+    // (not snapped per-frame) so the display doesn't jitter. Based on
+    // what's actually visible (the zoomed slice), not the full band.
+    if (!displaySpectrum.isEmpty()) {
+        float frameMin = displaySpectrum[0];
+        float frameMax = displaySpectrum[0];
+        for (float v : displaySpectrum) {
             frameMin = std::min(frameMin, v);
             frameMax = std::max(frameMax, v);
         }
@@ -172,8 +189,9 @@ void MainWindow::repaintDisplays() {
     }
     m_panadapter->setDbRange(m_dbFloor, m_dbCeil);
     m_waterfall->setDbRange(m_dbFloor, m_dbCeil);
-    m_panadapter->setSpectrum(m_latestSpectrum);
-    m_waterfall->pushSpectrum(m_latestSpectrum);
+    m_panadapter->setSampleRateHz(displaySampleRateHz);
+    m_panadapter->setSpectrum(displaySpectrum);
+    m_waterfall->pushSpectrum(displaySpectrum);
 }
 
 MainWindow::~MainWindow() {
