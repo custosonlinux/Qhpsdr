@@ -189,6 +189,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 Qt::QueuedConnection);
         }
     });
+    connect(m_toolbar, &ToolbarWidget::widebandEnabledChanged, this, [this](bool enabled) {
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, enabled]() { m_connection->setWidebandEnabled(enabled); },
+                Qt::QueuedConnection);
+        }
+    });
 
     m_spectrum = new SpectrumAnalyzer(this);
     connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {
@@ -242,6 +249,13 @@ void MainWindow::repaintDisplays() {
         return;
     }
     m_spectrumDirty = false;
+    if (m_toolbar->widebandEnabled()) {
+        // The wideband full-band sweep (RadioConnection::wideSpectrumReady,
+        // connected in connectToDevice()) drives the panadapter/waterfall
+        // directly while this is on - don't also overwrite them with the
+        // narrow DDC-based feed below.
+        return;
+    }
 
     // Zoom: show only the center slice of the full received span, stretched
     // across the same widget width - see ToolbarWidget::zoomFactor(). Both
@@ -343,6 +357,7 @@ void MainWindow::saveSettings() {
     settings.setValue(QStringLiteral("spectralNoiseBlankerEnabled"), m_toolbar->spectralNoiseBlankerEnabled());
     settings.setValue(QStringLiteral("nr4SmoothingFactor"), m_toolbar->nr4SmoothingFactor());
     settings.setValue(QStringLiteral("filterBoardEnabled"), m_toolbar->filterBoardEnabled());
+    settings.setValue(QStringLiteral("widebandEnabled"), m_toolbar->widebandEnabled());
     settings.endGroup();
 
     settings.beginWriteArray(QStringLiteral("bandstack"));
@@ -386,6 +401,7 @@ void MainWindow::loadSettings() {
         settings.value(QStringLiteral("spectralNoiseBlankerEnabled"), false).toBool());
     m_toolbar->setNr4SmoothingFactor(settings.value(QStringLiteral("nr4SmoothingFactor"), 0.0).toDouble());
     m_toolbar->setFilterBoardEnabled(settings.value(QStringLiteral("filterBoardEnabled"), false).toBool());
+    m_toolbar->setWidebandEnabled(settings.value(QStringLiteral("widebandEnabled"), false).toBool());
     settings.endGroup();
 
     m_bandStack.clear();
@@ -554,17 +570,45 @@ void MainWindow::connectToDevice(const DiscoveredDevice &device) {
             m_spectrum->feedSample(iq[i], iq[i + 1]);
         }
     });
+    // GUI-thread context (`this`) - Qt auto-queues this across threads,
+    // same as statsUpdated/errorOccurred above. Only fires while
+    // ToolbarWidget::widebandEnabled() is on (NewProtocolConnection only
+    // emits it then); repaintDisplays() skips its own narrow-band feed
+    // while that's the case, so the two don't fight over the same widgets.
+    connect(m_connection, &RadioConnection::wideSpectrumReady, this,
+            [this](const QVector<float> &magnitudesDb, double sampleRateHz) {
+                if (magnitudesDb.isEmpty()) {
+                    return;
+                }
+                float frameMin = magnitudesDb[0];
+                float frameMax = magnitudesDb[0];
+                for (float v : magnitudesDb) {
+                    frameMin = std::min(frameMin, v);
+                    frameMax = std::max(frameMax, v);
+                }
+                m_panadapter->setDbRange(frameMin - 5.0f, frameMax + 8.0f);
+                m_waterfall->setDbRange(frameMin - 5.0f, frameMax + 8.0f);
+                m_panadapter->setCenterFrequencyHz(sampleRateHz / 2.0);
+                m_panadapter->setSampleRateHz(sampleRateHz);
+                m_panadapter->setSpectrum(magnitudesDb);
+                m_waterfall->pushSpectrum(magnitudesDb);
+            });
 
     QMetaObject::invokeMethod(
         m_connection, [this, device]() { m_connection->connectToDevice(device, m_vfoPanel->frequencyHz()); },
         Qt::QueuedConnection);
-    // A fresh connection object always starts with filterBoardEnabled=false
-    // internally - re-push whatever the toolbar currently holds (e.g.
-    // restored from saved settings) rather than silently resetting it.
+    // A fresh connection object always starts with filterBoardEnabled/
+    // widebandEnabled=false internally - re-push whatever the toolbar
+    // currently holds (e.g. restored from saved settings) rather than
+    // silently resetting it.
     {
         const bool filterBoardEnabled = m_toolbar->filterBoardEnabled();
         QMetaObject::invokeMethod(
             m_connection, [this, filterBoardEnabled]() { m_connection->setFilterBoardEnabled(filterBoardEnabled); },
+            Qt::QueuedConnection);
+        const bool widebandEnabled = m_toolbar->widebandEnabled();
+        QMetaObject::invokeMethod(
+            m_connection, [this, widebandEnabled]() { m_connection->setWidebandEnabled(widebandEnabled); },
             Qt::QueuedConnection);
     }
     m_vfoPanel->setConnected(true);

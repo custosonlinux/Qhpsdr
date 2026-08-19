@@ -3,6 +3,7 @@
 #include <QTimer>
 #include <QUdpSocket>
 #include <array>
+#include <cmath>
 
 namespace {
 
@@ -12,6 +13,7 @@ constexpr quint16 kGeneralPort = 1024;          // general packet, host -> radio
 constexpr quint16 kReceiveSpecificPort = 1025;  // receive-specific packet, host -> radio
 constexpr quint16 kHighPriorityPort = 1027;     // high-priority packet, host -> radio
 constexpr quint16 kRxIqBasePort = 1035;         // radio -> host, +ddc index (source port)
+constexpr quint16 kWidebandPort = 1027;         // radio -> host, wideband spectrum (source port)
 constexpr int kMaxDdc = 4;
 
 constexpr int kGeneralPacketSize = 60;
@@ -19,6 +21,22 @@ constexpr int kReceiveSpecificPacketSize = 1444;
 constexpr int kHighPriorityPacketSize = 1444;
 constexpr int kRxIqPacketSize = 1444;
 constexpr int kRxIqSamplesPerPacket = 238;
+
+// Wideband spectrum config sent in the general packet - see
+// RadioConnection::setWidebandEnabled()'s doc comment: these values (512
+// bins, 16-bit samples, 1 packet/frame) match new_protocol.h's/
+// newhpsdrsim.c's documented *defaults*, chosen so the radio's own
+// fallback matches what's sent explicitly - not derived from any working
+// example. kWidebandUpdateRateMs is a free choice (no documented default),
+// picked to roughly match the panadapter's own repaint cadence.
+constexpr int kWidebandSampleCount = 512;
+constexpr int kWidebandSampleBits = 16;
+constexpr int kWidebandUpdateRateMs = 50;
+constexpr int kWidebandPacketsPerFrame = 1;
+// Nyquist frequency of the standard 122.88MHz HPSDR ADC clock (same
+// reference clock as kPhaseWordPerHz below) - the span the wideband sweep
+// covers, 0Hz to this value, one-sided (real ADC samples, not I/Q).
+constexpr double kWidebandSampleRateHz = 61440000.0;
 
 // freqHz -> 32-bit DDC/DUC tuning phase word: 2^32 / 122.88MHz (the
 // standard HPSDR Protocol 2 reference clock), matching
@@ -193,9 +211,19 @@ void NewProtocolConnection::sendGeneralPacket() {
     std::array<uchar, kGeneralPacketSize> buf{};
     putU32BE(buf.data(), m_generalSequence++);
     // buf[4] = 0x00 (already zero) identifies this as the general packet.
-    // All per-stream port-override fields (bytes 5-22) are left zero, so
-    // the radio uses its documented defaults (new_protocol.h) - exactly
-    // what deskHPSDR itself does.
+    // All per-stream port-override fields (bytes 5-22, except the wideband
+    // ones written below) are left zero, so the radio uses its documented
+    // defaults (new_protocol.h) - exactly what deskHPSDR itself does.
+    if (m_widebandEnabled) {
+        // byte23=enable, bytes24-25=sample count (BE16), byte26=bits/sample,
+        // byte27=update rate (ms), byte28=packets/frame - see
+        // kWidebandSampleCount et al.'s comment for how unverified this is.
+        buf[23] = 0x01;
+        putU16BE(&buf[24], quint16(kWidebandSampleCount));
+        buf[26] = uchar(kWidebandSampleBits);
+        buf[27] = uchar(kWidebandUpdateRateMs);
+        buf[28] = uchar(kWidebandPacketsPerFrame);
+    }
     buf[37] = 0x08; // phase word (not frequency), matches new_protocol_general()
     buf[38] = 0x01; // enable hardware timer
     // buf[58] (PA enable) stays 0 - no PA/TX yet. buf[59] bit 0 is the
@@ -267,6 +295,8 @@ void NewProtocolConnection::readPendingDatagrams() {
         // packet - see the class comment.
         if (senderPort >= kRxIqBasePort && senderPort < kRxIqBasePort + kMaxDdc) {
             parseRxIqPacket(reinterpret_cast<const uchar *>(buffer.constData()), buffer.size());
+        } else if (senderPort == kWidebandPort && m_widebandEnabled) {
+            parseWidebandPacket(reinterpret_cast<const uchar *>(buffer.constData()), buffer.size());
         }
         // Other stream types (high-priority-to-host status, mic/line audio)
         // aren't consumed yet.
@@ -294,6 +324,35 @@ void NewProtocolConnection::parseRxIqPacket(const uchar *data, int length) {
         ++m_samplesReceived;
     }
     emit iqSamplesReady(iq);
+}
+
+void NewProtocolConnection::parseWidebandPacket(const uchar *data, int length) {
+    // UNVERIFIED wire format - see RadioConnection::setWidebandEnabled()'s
+    // doc comment. Assumed by analogy with every other Protocol 2 "to
+    // host" packet this class has confirmed: a 4-byte sequence number
+    // header, then kWidebandSampleCount consecutive big-endian unsigned
+    // samples (kWidebandSampleBits wide - only the 16-bit case is
+    // implemented, since that's what was configured in sendGeneralPacket()).
+    const int headerSize = 4;
+    const int bytesPerSample = kWidebandSampleBits / 8;
+    const int needed = headerSize + kWidebandSampleCount * bytesPerSample;
+    if (length < needed) {
+        return;
+    }
+
+    QVector<float> magnitudesDb;
+    magnitudesDb.reserve(kWidebandSampleCount);
+    const uchar *p = data + headerSize;
+    for (int i = 0; i < kWidebandSampleCount; ++i, p += bytesPerSample) {
+        const quint16 raw = quint16((p[0] << 8) | p[1]);
+        // Placeholder scaling: treat the raw value as a linear magnitude
+        // and convert to dB, floored to avoid log(0). The actual
+        // calibration (offset/reference level) is unknown until this is
+        // seen against real hardware - see the class comment.
+        const float linear = qMax(1.0f, float(raw));
+        magnitudesDb.append(20.0f * std::log10(linear) - 100.0f);
+    }
+    emit wideSpectrumReady(magnitudesDb, kWidebandSampleRateHz);
 }
 
 void NewProtocolConnection::reportStats() {

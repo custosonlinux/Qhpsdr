@@ -127,6 +127,12 @@ public:
     bool filterBoardEnabled() const;
     void setFilterBoardEnabled(bool enabled);
 
+    // Full-band ADC spectrum sweep - see RadioConnection::
+    // setWidebandEnabled()'s doc comment (unverified wire format, only
+    // meaningful over Protocol 2). Off by default.
+    bool widebandEnabled() const;
+    void setWidebandEnabled(bool enabled);
+
 signals:
     // Band picked from the combo, by index (matching
     // bandIndexForFrequency()) plus that band's center frequency - the
@@ -140,6 +146,7 @@ signals:
     void fpsChanged(int fps);
 
     void filterBoardEnabledChanged(bool enabled);
+    void widebandEnabledChanged(bool enabled);
 
     // AF gain in dB, -40..0 (core/deskhpsdr-src/sliders.c's af_gain_scale
     // range) - see RxAudioChannel::setAfGain().
@@ -171,6 +178,7 @@ private:
     QSlider *m_nr4SmoothSlider = nullptr;
     QLabel *m_nr4SmoothValueLabel = nullptr;
     QPushButton *m_filterBoardButton = nullptr;
+    QPushButton *m_widebandButton = nullptr;
 };
 
 #endif // QHPSDR_TOOLBARWIDGET_H

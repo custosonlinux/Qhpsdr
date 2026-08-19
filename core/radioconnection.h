@@ -43,6 +43,21 @@ public:
     // "standard" (non-ANAN7000/Orion2/Saturn) board family.
     virtual void setFilterBoardEnabled(bool enabled) = 0;
 
+    // Full-band ("wideband") ADC spectrum, independent of the tuned DDC's
+    // own zoomed panadapter view - covers 0Hz to the ADC's Nyquist
+    // frequency in one sweep. Protocol 1 has no such feature at all (no-op
+    // on OldProtocolConnection). Protocol 2's wire format for this is
+    // UNVERIFIED against any working reference: deskHPSDR's own
+    // new_protocol.c never actually sends/enables it (the general packet
+    // fields exist but are never written), and even the Saturn-specific
+    // path is commented "P2 - not yet implemented" throughout
+    // saturnregisters.c. NewProtocolConnection's implementation is a
+    // best-effort construction from the general packet's documented field
+    // *names* (new_protocol.h) and precedent from every other Protocol 2
+    // packet type (4-byte sequence header) - needs real-hardware
+    // confirmation, most likely the dB scaling in particular.
+    virtual void setWidebandEnabled(bool enabled) = 0;
+
 signals:
     void connected();
     void disconnected();
@@ -55,6 +70,11 @@ signals:
     // RX IQ frame) - callers consume this as a plain stream, not
     // frame-aligned, so the difference doesn't matter downstream.
     void iqSamplesReady(QVector<double> interleavedIQ);
+
+    // Full-band spectrum magnitudes in dB, one-sided (0Hz..sampleRateHz,
+    // not centered like the DDC panadapter's complex-baseband view) - see
+    // setWidebandEnabled(). Never emitted by OldProtocolConnection.
+    void wideSpectrumReady(QVector<float> magnitudesDb, double sampleRateHz);
 };
 
 #endif // QHPSDR_RADIOCONNECTION_H

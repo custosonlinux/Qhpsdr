@@ -35,10 +35,10 @@ class QTimer;
 //    followed by up to 238 samples of 3-byte I + 3-byte Q.
 //
 // NOT yet implemented: TX, more than one receiver/DDC, PureSignal,
-// diversity, wideband spectrum stream, mic/line audio, the Alex board's
-// own 0/10/20/30dB attenuator or antenna-routing (EXT1/EXT2/XVTR/Bypass)
-// bits - setAttenuation() is a no-op for now (unlike OldProtocolConnection's,
-// which drives Hermes's own separate ADC0 step attenuator, not Alex's).
+// diversity, mic/line audio, the Alex board's own 0/10/20/30dB attenuator
+// or antenna-routing (EXT1/EXT2/XVTR/Bypass) bits - setAttenuation() is a
+// no-op for now (unlike OldProtocolConnection's, which drives Hermes's own
+// separate ADC0 step attenuator, not Alex's).
 class NewProtocolConnection : public RadioConnection {
     Q_OBJECT
 
@@ -67,6 +67,11 @@ public:
     // convention a real Alex board uses.
     void setFilterBoardEnabled(bool enabled) override { m_filterBoardEnabled = enabled; }
 
+    // Full-band ADC spectrum - see RadioConnection::setWidebandEnabled()'s
+    // doc comment for the significant caveat that this wire format is
+    // unverified against any working reference implementation.
+    void setWidebandEnabled(bool enabled) override { m_widebandEnabled = enabled; }
+
 private slots:
     void readPendingDatagrams();
     void sendPeriodicPackets();
@@ -77,6 +82,7 @@ private:
     void sendReceiveSpecificPacket();
     void sendHighPriorityPacket();
     void parseRxIqPacket(const uchar *data, int length);
+    void parseWidebandPacket(const uchar *data, int length);
 
     QUdpSocket *m_socket = nullptr;
     QTimer *m_periodicTimer = nullptr;
@@ -85,6 +91,7 @@ private:
     QHostAddress m_deviceAddress;
     bool m_connected = false;
     bool m_filterBoardEnabled = false;
+    bool m_widebandEnabled = false;
 
     quint32 m_generalSequence = 0;
     quint32 m_receiveSpecificSequence = 0;

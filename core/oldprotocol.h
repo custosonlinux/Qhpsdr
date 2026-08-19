@@ -59,6 +59,9 @@ public:
     // a standard Alex-compatible filter board to auto-switch correctly.
     void setFilterBoardEnabled(bool enabled) override { Q_UNUSED(enabled); }
 
+    // No-op: Protocol 1 has no wideband/full-band spectrum feature at all.
+    void setWidebandEnabled(bool enabled) override { Q_UNUSED(enabled); }
+
 private slots:
     void readPendingDatagrams();
     void reportStats();

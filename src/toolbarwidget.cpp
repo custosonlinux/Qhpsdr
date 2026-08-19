@@ -227,6 +227,14 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
            "a filter board is actually connected."));
     connect(m_filterBoardButton, &QPushButton::toggled, this, &ToolbarWidget::filterBoardEnabledChanged);
 
+    m_widebandButton = new QPushButton(tr("Wideband"), this);
+    m_widebandButton->setCheckable(true);
+    m_widebandButton->setStyleSheet(kToggleButtonStyle);
+    m_widebandButton->setToolTip(
+        tr("Full-band ADC spectrum sweep instead of the tuned DDC's own zoomed view. Protocol 2 only - "
+           "wire format is unverified against any working reference, needs real-hardware confirmation."));
+    connect(m_widebandButton, &QPushButton::toggled, this, &ToolbarWidget::widebandEnabledChanged);
+
     auto *layout = new QHBoxLayout(this);
     layout->addWidget(bandLabel);
     layout->addWidget(m_bandCombo);
@@ -263,6 +271,7 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     layout->addWidget(m_nr4SmoothValueLabel);
     layout->addSpacing(16);
     layout->addWidget(m_filterBoardButton);
+    layout->addWidget(m_widebandButton);
 
     setConnected(false);
 }
@@ -358,6 +367,7 @@ void ToolbarWidget::setConnected(bool connected) {
     m_snbButton->setEnabled(connected);
     m_nr4SmoothSlider->setEnabled(connected);
     m_filterBoardButton->setEnabled(connected);
+    m_widebandButton->setEnabled(connected);
 }
 
 AgcMode ToolbarWidget::agcMode() const { return m_agcCombo ? AgcMode(m_agcCombo->currentIndex()) : AgcMode::Medium; }
@@ -429,5 +439,13 @@ bool ToolbarWidget::filterBoardEnabled() const {
 void ToolbarWidget::setFilterBoardEnabled(bool enabled) {
     if (m_filterBoardButton) {
         m_filterBoardButton->setChecked(enabled);
+    }
+}
+
+bool ToolbarWidget::widebandEnabled() const { return m_widebandButton && m_widebandButton->isChecked(); }
+
+void ToolbarWidget::setWidebandEnabled(bool enabled) {
+    if (m_widebandButton) {
+        m_widebandButton->setChecked(enabled);
     }
 }
