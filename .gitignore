@@ -4,3 +4,4 @@ build/
 *.a
 CMakeCache.txt
 CMakeFiles/
+pictures/

@@ -46,6 +46,66 @@ qint32 get24BESigned(const uchar *p) {
     return v;
 }
 
+// ALEX0 register: RX HPF/BPF + LPF bank selection, computed from the tuned
+// RX frequency. Mirrors new_protocol_high_priority()'s "default" board
+// family branch in new_protocol.c (i.e. a standard Alex-compatible filter
+// board - NOT the ANAN-7000/8000/Saturn band-pass-filter variant, and not
+// Orion2's dual-ADC case). Bit values from core/deskhpsdr-src/alex.h.
+//
+// Two independent filter banks get combined into one word: RX high-pass
+// filters (picked by the RX frequency directly) and TX low-pass filters
+// (also picked by the RX frequency here, since - per new_protocol.c's
+// comment - receive signals through Ant1/2/3 pass through the TX LPFs too
+// on this board family, and this class never transmits so LPFfreq==RX
+// frequency unconditionally, unlike new_protocol.c which switches to the
+// DUC frequency while actually transmitting).
+//
+// NOT implemented: antenna routing (EXT1/EXT2/XVTR/Bypass - assumes the
+// default Ant1/2/3 routing), the Alex attenuator, T/R relay, PureSignal
+// bit - all only relevant once TX exists.
+quint32 computeAlex0(double rxFrequencyHz) {
+    quint32 alex0 = 0;
+
+    // RX high-pass filters (alex.h: ALEX_BYPASS_HPF, ALEX_1_5MHZ_HPF,
+    // ALEX_6_5MHZ_HPF, ALEX_9_5MHZ_HPF, ALEX_13MHZ_HPF, ALEX_20MHZ_HPF,
+    // ALEX_6M_PREAMP).
+    if (rxFrequencyHz < 1800000.0) {
+        alex0 |= 0x00001000; // ALEX_BYPASS_HPF
+    } else if (rxFrequencyHz < 6500000.0) {
+        alex0 |= 0x00000040; // ALEX_1_5MHZ_HPF
+    } else if (rxFrequencyHz < 9500000.0) {
+        alex0 |= 0x00000020; // ALEX_6_5MHZ_HPF
+    } else if (rxFrequencyHz < 13000000.0) {
+        alex0 |= 0x00000010; // ALEX_9_5MHZ_HPF
+    } else if (rxFrequencyHz < 20000000.0) {
+        alex0 |= 0x00000002; // ALEX_13MHZ_HPF
+    } else if (rxFrequencyHz < 50000000.0) {
+        alex0 |= 0x00000004; // ALEX_20MHZ_HPF
+    } else {
+        alex0 |= 0x00000008; // ALEX_6M_PREAMP
+    }
+
+    // TX low-pass filters (alex.h: ALEX_160/80/60_40/30_20/17_15/12_10_LPF,
+    // ALEX_6_BYPASS_LPF).
+    if (rxFrequencyHz > 35600000.0) {
+        alex0 |= 0x20000000; // ALEX_6_BYPASS_LPF
+    } else if (rxFrequencyHz > 24000000.0) {
+        alex0 |= 0x40000000; // ALEX_12_10_LPF
+    } else if (rxFrequencyHz > 16500000.0) {
+        alex0 |= 0x80000000; // ALEX_17_15_LPF
+    } else if (rxFrequencyHz > 8000000.0) {
+        alex0 |= 0x00100000; // ALEX_30_20_LPF
+    } else if (rxFrequencyHz > 5000000.0) {
+        alex0 |= 0x00200000; // ALEX_60_40_LPF
+    } else if (rxFrequencyHz > 2500000.0) {
+        alex0 |= 0x00400000; // ALEX_80_LPF
+    } else {
+        alex0 |= 0x00800000; // ALEX_160_LPF
+    }
+
+    return alex0;
+}
+
 } // namespace
 
 NewProtocolConnection::NewProtocolConnection(QObject *parent) : RadioConnection(parent) {
@@ -138,8 +198,14 @@ void NewProtocolConnection::sendGeneralPacket() {
     // what deskHPSDR itself does.
     buf[37] = 0x08; // phase word (not frequency), matches new_protocol_general()
     buf[38] = 0x01; // enable hardware timer
-    // buf[58]/[59] (PA/Alex filter board enable) stay 0 - no PA, no filter
-    // board wired up yet.
+    // buf[58] (PA enable) stays 0 - no PA/TX yet. buf[59] bit 0 is the
+    // ALEX0 register enable flag - without it the radio ignores whatever
+    // alex0 bits sendHighPriorityPacket() sends. ALEX1 (bit 1) stays off -
+    // that's the second filter board on dual-ADC boards this class doesn't
+    // support.
+    if (m_filterBoardEnabled) {
+        buf[59] = 0x01;
+    }
     m_socket->writeDatagram(reinterpret_cast<const char *>(buf.data()), qint64(buf.size()), m_deviceAddress,
                              kGeneralPort);
 }
@@ -164,11 +230,22 @@ void NewProtocolConnection::sendHighPriorityPacket() {
     buf[4] = 0x01; // run bit (bit 0) - MOX (bit 1) stays 0, no TX support yet
     const quint32 phase = quint32(double(m_rxFrequencyHz) * kPhaseWordPerHz);
     putU32BE(&buf[9], phase); // DDC0 frequency word
+    if (m_filterBoardEnabled) {
+        // ALEX0 at bytes 1432-1435 (new_protocol.c:
+        // high_priority_buffer_to_radio[1432..1435]) - only meaningful if
+        // the general packet's ALEX0 enable bit is also set.
+        putU32BE(&buf[1432], computeAlex0(m_rxFrequencyHz));
+    }
     m_socket->writeDatagram(reinterpret_cast<const char *>(buf.data()), qint64(buf.size()), m_deviceAddress,
                              kHighPriorityPort);
 }
 
 void NewProtocolConnection::sendPeriodicPackets() {
+    // Also resends the general packet (carries the ALEX0-enable flag) -
+    // needed so toggling setFilterBoardEnabled() mid-session takes effect
+    // without a full reconnect, not just at connectToDevice()'s one-shot
+    // initial send.
+    sendGeneralPacket();
     sendHighPriorityPacket();
     sendReceiveSpecificPacket();
 }

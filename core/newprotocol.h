@@ -35,10 +35,10 @@ class QTimer;
 //    followed by up to 238 samples of 3-byte I + 3-byte Q.
 //
 // NOT yet implemented: TX, more than one receiver/DDC, PureSignal,
-// diversity, wideband spectrum stream, mic/line audio, Alex/Apollo filter
-// board control. Protocol 2's step attenuator lives in that same
-// Alex/filter-board config this class doesn't send yet, so
-// setAttenuation() is a no-op for now (unlike OldProtocolConnection's).
+// diversity, wideband spectrum stream, mic/line audio, the Alex board's
+// own 0/10/20/30dB attenuator or antenna-routing (EXT1/EXT2/XVTR/Bypass)
+// bits - setAttenuation() is a no-op for now (unlike OldProtocolConnection's,
+// which drives Hermes's own separate ADC0 step attenuator, not Alex's).
 class NewProtocolConnection : public RadioConnection {
     Q_OBJECT
 
@@ -55,6 +55,17 @@ public:
     // No step attenuator wired up yet for Protocol 2 - see class comment.
     void setAttenuation(int db) override { Q_UNUSED(db); }
     int attenuation() const override { return 0; }
+
+    // Alex/Apollo-compatible filter board: RX HPF/BPF and LPF bank
+    // selection by tuned frequency, computed and sent every high-priority
+    // packet (see RadioConnection::setFilterBoardEnabled()'s doc comment
+    // and computeAlex0() in newprotocol.cpp). Off by default - only turn
+    // this on if a filter board is actually wired to the radio's standard
+    // Alex control connector; the exact relay-to-function mapping is fixed
+    // in the radio's own firmware, not something this class controls, so a
+    // self-built board only works correctly if it followed the same
+    // convention a real Alex board uses.
+    void setFilterBoardEnabled(bool enabled) override { m_filterBoardEnabled = enabled; }
 
 private slots:
     void readPendingDatagrams();
@@ -73,6 +84,7 @@ private:
 
     QHostAddress m_deviceAddress;
     bool m_connected = false;
+    bool m_filterBoardEnabled = false;
 
     quint32 m_generalSequence = 0;
     quint32 m_receiveSpecificSequence = 0;

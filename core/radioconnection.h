@@ -31,6 +31,18 @@ public:
     virtual void setAttenuation(int db) = 0;
     virtual int attenuation() const = 0;
 
+    // Alex/Apollo-compatible filter board (RX HPF/BPF + LPF banks, switched
+    // by tuned frequency). Protocol 1 (OldProtocolConnection) is a no-op:
+    // the Hermes firmware decodes the filter bands itself from the DDC
+    // frequency it already receives, without any extra host-side bits, in
+    // normal (non-manual-override) operation - see the comment in
+    // oldprotocol.cpp. Protocol 2 (NewProtocolConnection) has to compute
+    // and send those bits itself every high-priority packet - see
+    // new_protocol_high_priority()'s ALEX0/ALEX1 computation in
+    // core/deskhpsdr-src/new_protocol.c, which this mirrors for the
+    // "standard" (non-ANAN7000/Orion2/Saturn) board family.
+    virtual void setFilterBoardEnabled(bool enabled) = 0;
+
 signals:
     void connected();
     void disconnected();

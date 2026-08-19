@@ -120,6 +120,13 @@ public:
     double nr4SmoothingFactor() const;
     void setNr4SmoothingFactor(double percent);
 
+    // Alex/Apollo-compatible filter board auto-switching - see
+    // RadioConnection::setFilterBoardEnabled(). Off by default; only
+    // meaningful over Protocol 2 (a no-op over Protocol 1, which doesn't
+    // need it - see OldProtocolConnection's implementation).
+    bool filterBoardEnabled() const;
+    void setFilterBoardEnabled(bool enabled);
+
 signals:
     // Band picked from the combo, by index (matching
     // bandIndexForFrequency()) plus that band's center frequency - the
@@ -131,6 +138,8 @@ signals:
 
     // Panadapter/waterfall repaint rate in frames per second - see fps().
     void fpsChanged(int fps);
+
+    void filterBoardEnabledChanged(bool enabled);
 
     // AF gain in dB, -40..0 (core/deskhpsdr-src/sliders.c's af_gain_scale
     // range) - see RxAudioChannel::setAfGain().
@@ -161,6 +170,7 @@ private:
     QPushButton *m_snbButton = nullptr;
     QSlider *m_nr4SmoothSlider = nullptr;
     QLabel *m_nr4SmoothValueLabel = nullptr;
+    QPushButton *m_filterBoardButton = nullptr;
 };
 
 #endif // QHPSDR_TOOLBARWIDGET_H

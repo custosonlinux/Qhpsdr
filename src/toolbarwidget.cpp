@@ -218,6 +218,15 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
         emit nr4SmoothingChanged(double(value));
     });
 
+    m_filterBoardButton = new QPushButton(tr("Filter Board"), this);
+    m_filterBoardButton->setCheckable(true);
+    m_filterBoardButton->setStyleSheet(kToggleButtonStyle);
+    m_filterBoardButton->setToolTip(
+        tr("Auto-switch an Alex/Apollo-compatible RX filter board by tuned frequency. Only take effect "
+           "over Protocol 2 - Protocol 1 radios switch filters in firmware without this. Leave off unless "
+           "a filter board is actually connected."));
+    connect(m_filterBoardButton, &QPushButton::toggled, this, &ToolbarWidget::filterBoardEnabledChanged);
+
     auto *layout = new QHBoxLayout(this);
     layout->addWidget(bandLabel);
     layout->addWidget(m_bandCombo);
@@ -252,6 +261,8 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     layout->addWidget(nr4SmoothLabel);
     layout->addWidget(m_nr4SmoothSlider, /*stretch=*/1);
     layout->addWidget(m_nr4SmoothValueLabel);
+    layout->addSpacing(16);
+    layout->addWidget(m_filterBoardButton);
 
     setConnected(false);
 }
@@ -346,6 +357,7 @@ void ToolbarWidget::setConnected(bool connected) {
     m_anfButton->setEnabled(connected);
     m_snbButton->setEnabled(connected);
     m_nr4SmoothSlider->setEnabled(connected);
+    m_filterBoardButton->setEnabled(connected);
 }
 
 AgcMode ToolbarWidget::agcMode() const { return m_agcCombo ? AgcMode(m_agcCombo->currentIndex()) : AgcMode::Medium; }
@@ -407,5 +419,15 @@ double ToolbarWidget::nr4SmoothingFactor() const {
 void ToolbarWidget::setNr4SmoothingFactor(double percent) {
     if (m_nr4SmoothSlider) {
         m_nr4SmoothSlider->setValue(int(percent));
+    }
+}
+
+bool ToolbarWidget::filterBoardEnabled() const {
+    return m_filterBoardButton && m_filterBoardButton->isChecked();
+}
+
+void ToolbarWidget::setFilterBoardEnabled(bool enabled) {
+    if (m_filterBoardButton) {
+        m_filterBoardButton->setChecked(enabled);
     }
 }

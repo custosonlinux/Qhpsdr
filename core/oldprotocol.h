@@ -50,6 +50,15 @@ public:
     void setAttenuation(int db) override { m_attenuationDb = qBound(0, db, 31); }
     int attenuation() const override { return m_attenuationDb; }
 
+    // No-op: in normal (non-manual-override) Protocol 1 operation, the
+    // Hermes firmware itself decodes RX HPF/TX LPF filter bands from the
+    // DDC frequency it's already sent (core/deskhpsdr-src/old_protocol.c's
+    // C0=0x12 "Manual Filter Selection" bit stays clear except for a few
+    // special-case overrides this port doesn't implement yet - PA-disabled
+    // bypass, PureSignal EXT1 feedback). No extra bits need to be sent for
+    // a standard Alex-compatible filter board to auto-switch correctly.
+    void setFilterBoardEnabled(bool enabled) override { Q_UNUSED(enabled); }
+
 private slots:
     void readPendingDatagrams();
     void reportStats();

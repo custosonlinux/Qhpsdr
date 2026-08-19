@@ -182,6 +182,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 m_rxAudio, [this, percent]() { m_rxAudio->setNr4SmoothingFactor(percent); }, Qt::QueuedConnection);
         }
     });
+    connect(m_toolbar, &ToolbarWidget::filterBoardEnabledChanged, this, [this](bool enabled) {
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, enabled]() { m_connection->setFilterBoardEnabled(enabled); },
+                Qt::QueuedConnection);
+        }
+    });
 
     m_spectrum = new SpectrumAnalyzer(this);
     connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {
@@ -335,6 +342,7 @@ void MainWindow::saveSettings() {
     settings.setValue(QStringLiteral("autoNotchEnabled"), m_toolbar->autoNotchEnabled());
     settings.setValue(QStringLiteral("spectralNoiseBlankerEnabled"), m_toolbar->spectralNoiseBlankerEnabled());
     settings.setValue(QStringLiteral("nr4SmoothingFactor"), m_toolbar->nr4SmoothingFactor());
+    settings.setValue(QStringLiteral("filterBoardEnabled"), m_toolbar->filterBoardEnabled());
     settings.endGroup();
 
     settings.beginWriteArray(QStringLiteral("bandstack"));
@@ -377,6 +385,7 @@ void MainWindow::loadSettings() {
     m_toolbar->setSpectralNoiseBlankerEnabled(
         settings.value(QStringLiteral("spectralNoiseBlankerEnabled"), false).toBool());
     m_toolbar->setNr4SmoothingFactor(settings.value(QStringLiteral("nr4SmoothingFactor"), 0.0).toDouble());
+    m_toolbar->setFilterBoardEnabled(settings.value(QStringLiteral("filterBoardEnabled"), false).toBool());
     settings.endGroup();
 
     m_bandStack.clear();
@@ -549,6 +558,15 @@ void MainWindow::connectToDevice(const DiscoveredDevice &device) {
     QMetaObject::invokeMethod(
         m_connection, [this, device]() { m_connection->connectToDevice(device, m_vfoPanel->frequencyHz()); },
         Qt::QueuedConnection);
+    // A fresh connection object always starts with filterBoardEnabled=false
+    // internally - re-push whatever the toolbar currently holds (e.g.
+    // restored from saved settings) rather than silently resetting it.
+    {
+        const bool filterBoardEnabled = m_toolbar->filterBoardEnabled();
+        QMetaObject::invokeMethod(
+            m_connection, [this, filterBoardEnabled]() { m_connection->setFilterBoardEnabled(filterBoardEnabled); },
+            Qt::QueuedConnection);
+    }
     m_vfoPanel->setConnected(true);
     m_toolbar->setConnected(true);
     {
