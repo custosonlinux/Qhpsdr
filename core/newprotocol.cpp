@@ -4,6 +4,7 @@
 #include <QUdpSocket>
 #include <array>
 #include <cmath>
+#include <fftw3.h>
 
 namespace {
 
@@ -145,6 +146,22 @@ NewProtocolConnection::NewProtocolConnection(QObject *parent) : RadioConnection(
     m_statsTimer = new QTimer(this);
     m_statsTimer->setInterval(1000);
     connect(m_statsTimer, &QTimer::timeout, this, &NewProtocolConnection::reportStats);
+
+    // Real-input FFT for the wideband burst - see setWidebandEnabled()'s
+    // doc comment. Reuses a plain complex-to-complex plan (imaginary part
+    // fed as 0) rather than a dedicated real-to-complex FFTW plan, purely
+    // for code-path simplicity - CPU cost is irrelevant at 512 points/20Hz.
+    m_widebandFftIn.assign(kWidebandSampleCount, {0.0f, 0.0f});
+    m_widebandFftOut.assign(kWidebandSampleCount, {0.0f, 0.0f});
+    m_widebandFftPlan =
+        fftwf_plan_dft_1d(kWidebandSampleCount, reinterpret_cast<fftwf_complex *>(m_widebandFftIn.data()),
+                           reinterpret_cast<fftwf_complex *>(m_widebandFftOut.data()), FFTW_FORWARD, FFTW_ESTIMATE);
+}
+
+NewProtocolConnection::~NewProtocolConnection() {
+    if (m_widebandFftPlan) {
+        fftwf_destroy_plan(static_cast<fftwf_plan>(m_widebandFftPlan));
+    }
 }
 
 void NewProtocolConnection::connectToDevice(const DiscoveredDevice &device, double rxFrequencyHz) {
@@ -327,12 +344,14 @@ void NewProtocolConnection::parseRxIqPacket(const uchar *data, int length) {
 }
 
 void NewProtocolConnection::parseWidebandPacket(const uchar *data, int length) {
-    // UNVERIFIED wire format - see RadioConnection::setWidebandEnabled()'s
-    // doc comment. Assumed by analogy with every other Protocol 2 "to
-    // host" packet this class has confirmed: a 4-byte sequence number
-    // header, then kWidebandSampleCount consecutive big-endian unsigned
-    // samples (kWidebandSampleBits wide - only the 16-bit case is
-    // implemented, since that's what was configured in sendGeneralPacket()).
+    // Confirmed 2026-08-19 against real hardware (see setWidebandEnabled()'s
+    // doc comment): 4-byte sequence header, then kWidebandSampleCount
+    // consecutive big-endian SIGNED 16-bit raw time-domain ADC samples -
+    // NOT a precomputed magnitude spectrum as originally assumed (real
+    // captures showed a near-zero mean and roughly symmetric +/- swing,
+    // the opposite of what a non-negative magnitude/power array would
+    // look like). This class runs its own windowed FFT on each burst,
+    // the same idea as SpectrumAnalyzer's for the narrowband IQ stream.
     const int headerSize = 4;
     const int bytesPerSample = kWidebandSampleBits / 8;
     const int needed = headerSize + kWidebandSampleCount * bytesPerSample;
@@ -340,17 +359,27 @@ void NewProtocolConnection::parseWidebandPacket(const uchar *data, int length) {
         return;
     }
 
-    QVector<float> magnitudesDb;
-    magnitudesDb.reserve(kWidebandSampleCount);
+    // Hann window, matching SpectrumAnalyzer's choice, then real samples
+    // (normalized to [-1,1]) into the complex FFT input with imaginary=0.
     const uchar *p = data + headerSize;
     for (int i = 0; i < kWidebandSampleCount; ++i, p += bytesPerSample) {
-        const quint16 raw = quint16((p[0] << 8) | p[1]);
-        // Placeholder scaling: treat the raw value as a linear magnitude
-        // and convert to dB, floored to avoid log(0). The actual
-        // calibration (offset/reference level) is unknown until this is
-        // seen against real hardware - see the class comment.
-        const float linear = qMax(1.0f, float(raw));
-        magnitudesDb.append(20.0f * std::log10(linear) - 100.0f);
+        const qint16 raw = qint16((p[0] << 8) | p[1]);
+        const float windowed = float(0.5 * (1.0 - std::cos(2.0 * M_PI * i / (kWidebandSampleCount - 1))));
+        m_widebandFftIn[size_t(i)] = {(float(raw) / 32768.0f) * windowed, 0.0f};
+    }
+
+    fftwf_execute(static_cast<fftwf_plan>(m_widebandFftPlan));
+
+    // Real input -> conjugate-symmetric output: only bins 0 (DC) through
+    // N/2 (Nyquist) are unique, N/2+1 bins total spanning the one-sided
+    // 0Hz..kWidebandSampleRateHz range this signal emits.
+    const int uniqueBins = kWidebandSampleCount / 2 + 1;
+    QVector<float> magnitudesDb;
+    magnitudesDb.reserve(uniqueBins);
+    constexpr float kFloorDb = -180.0f;
+    for (int n = 0; n < uniqueBins; ++n) {
+        const float mag = std::abs(m_widebandFftOut[size_t(n)]) / float(kWidebandSampleCount);
+        magnitudesDb.append(mag > 1e-9f ? 20.0f * std::log10(mag) : kFloorDb);
     }
     emit wideSpectrumReady(magnitudesDb, kWidebandSampleRateHz);
 }

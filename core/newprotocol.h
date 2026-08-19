@@ -2,7 +2,9 @@
 #define QHPSDR_NEWPROTOCOL_H
 
 #include <QHostAddress>
+#include <complex>
 #include <cstdint>
+#include <vector>
 
 #include "radioconnection.h"
 
@@ -44,6 +46,7 @@ class NewProtocolConnection : public RadioConnection {
 
 public:
     explicit NewProtocolConnection(QObject *parent = nullptr);
+    ~NewProtocolConnection() override;
 
     void connectToDevice(const DiscoveredDevice &device, double rxFrequencyHz = 7100000.0) override;
     void disconnectFromDevice() override;
@@ -68,8 +71,16 @@ public:
     void setFilterBoardEnabled(bool enabled) override { m_filterBoardEnabled = enabled; }
 
     // Full-band ADC spectrum - see RadioConnection::setWidebandEnabled()'s
-    // doc comment for the significant caveat that this wire format is
-    // unverified against any working reference implementation.
+    // doc comment. The general-packet config side was verified against
+    // hpsdrsim; the actual data format (512 signed 16-bit raw time-domain
+    // ADC samples per burst, not a precomputed magnitude spectrum) was
+    // confirmed 2026-08-19 against real hardware over VPN - this class
+    // runs its own FFT on each burst (parseWidebandPacket() in
+    // newprotocol.cpp), matching what SpectrumAnalyzer already does for
+    // the narrowband IQ stream, just real-valued input instead of complex.
+    // Still unconfirmed: the exact underlying sample rate these 512
+    // samples were captured at (assumed 122.88MHz, the standard HPSDR ADC
+    // clock, giving a 61.44MHz Nyquist span - kWidebandSampleRateHz).
     void setWidebandEnabled(bool enabled) override { m_widebandEnabled = enabled; }
 
 private slots:
@@ -102,6 +113,13 @@ private:
     quint64 m_samplesReceived = 0;
     quint64 m_lastStatsPackets = 0;
     quint64 m_lastStatsSamples = 0;
+
+    // Real-input FFT for the wideband burst (see setWidebandEnabled()'s
+    // comment) - opaque fftwf_plan, same pattern as SpectrumAnalyzer, to
+    // avoid pulling <fftw3.h> into this header.
+    void *m_widebandFftPlan = nullptr;
+    std::vector<std::complex<float>> m_widebandFftIn;
+    std::vector<std::complex<float>> m_widebandFftOut;
 };
 
 #endif // QHPSDR_NEWPROTOCOL_H
