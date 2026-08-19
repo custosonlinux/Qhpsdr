@@ -61,17 +61,20 @@ public:
     QString currentBandLabel() const;
     QString currentNoiseBlankerLabel() const;
 
-    // RF gain calibration offset in dB, subtracted from the displayed
-    // S-meter reading (core/deskhpsdr-src/radio.c: adc[0].gain, a pure
-    // calibration constant for standard - non-HermesLite2 - boards, not
-    // sent to hardware). Lets the user zero out the meter against a known
-    // reference rather than trust the uncalibrated default.
-    double rfGainDb() const;
-    void setRfGainDb(double dB);
-
     // AF (output volume) gain in dB, -40..0 - see RxAudioChannel::setAfGain().
     double afGainDb() const;
     void setAfGainDb(double dB);
+
+    // This receiver's own DDC sample rate in Hz - 48000/96000/192000/
+    // 384000/768000/1536000 (matches deskHPSDR's supported Hermes rates).
+    // Independent per receiver: each DDC has its own decimator in the
+    // FPGA, so RX1/RX2 can legitimately run at different rates
+    // simultaneously off the same physical ADC - see RadioConnection::
+    // setRxSampleRate()/setRxSampleRate2(). Changing this requires
+    // reopening the RxAudioChannel (WDSP bakes the input rate in at
+    // OpenChannel() time) - see sampleRateChanged()/ReceiverPanel.
+    int sampleRateHz() const;
+    void setSampleRateHz(int hz);
 
     // Panadapter/waterfall zoom: 1/2/4/8/16 - how much of the full
     // received span (the hardware's sample rate) is actually displayed,
@@ -120,19 +123,6 @@ public:
     double nr4SmoothingFactor() const;
     void setNr4SmoothingFactor(double percent);
 
-    // Alex/Apollo-compatible filter board auto-switching - see
-    // RadioConnection::setFilterBoardEnabled(). Off by default; only
-    // meaningful over Protocol 2 (a no-op over Protocol 1, which doesn't
-    // need it - see OldProtocolConnection's implementation).
-    bool filterBoardEnabled() const;
-    void setFilterBoardEnabled(bool enabled);
-
-    // Full-band ADC spectrum sweep - see RadioConnection::
-    // setWidebandEnabled()'s doc comment (unverified wire format, only
-    // meaningful over Protocol 2). Off by default.
-    bool widebandEnabled() const;
-    void setWidebandEnabled(bool enabled);
-
 signals:
     // Band picked from the combo, by index (matching
     // bandIndexForFrequency()) plus that band's center frequency - the
@@ -145,12 +135,12 @@ signals:
     // Panadapter/waterfall repaint rate in frames per second - see fps().
     void fpsChanged(int fps);
 
-    void filterBoardEnabledChanged(bool enabled);
-    void widebandEnabledChanged(bool enabled);
-
     // AF gain in dB, -40..0 (core/deskhpsdr-src/sliders.c's af_gain_scale
     // range) - see RxAudioChannel::setAfGain().
     void afGainChanged(double dB);
+
+    // This receiver's DDC sample rate in Hz - see sampleRateHz().
+    void sampleRateChanged(int hz);
 
     void agcModeChanged(AgcMode mode);
     void agcTopChanged(double dB);
@@ -164,10 +154,9 @@ private:
     QComboBox *m_bandCombo = nullptr;
     QSlider *m_afGainSlider = nullptr;
     QLabel *m_afGainValueLabel = nullptr;
-    QSlider *m_rfGainSlider = nullptr;
-    QLabel *m_rfGainValueLabel = nullptr;
     QComboBox *m_zoomCombo = nullptr;
     QComboBox *m_fpsCombo = nullptr;
+    QComboBox *m_rateCombo = nullptr;
     QComboBox *m_agcCombo = nullptr;
     QSlider *m_agcTopSlider = nullptr;
     QLabel *m_agcTopValueLabel = nullptr;
@@ -177,8 +166,6 @@ private:
     QPushButton *m_snbButton = nullptr;
     QSlider *m_nr4SmoothSlider = nullptr;
     QLabel *m_nr4SmoothValueLabel = nullptr;
-    QPushButton *m_filterBoardButton = nullptr;
-    QPushButton *m_widebandButton = nullptr;
 };
 
 #endif // QHPSDR_TOOLBARWIDGET_H

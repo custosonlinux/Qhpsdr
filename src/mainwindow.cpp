@@ -1,31 +1,29 @@
 #include "mainwindow.h"
 
+#include <QAction>
 #include <QAudioFormat>
 #include <QAudioSink>
+#include <QApplication>
+#include <QDockWidget>
 #include <QMediaDevices>
 #include <QMenuBar>
 #include <QMetaObject>
 #include <QSettings>
 #include <QStatusBar>
-#include <QApplication>
-#include <QSplitter>
 #include <QThread>
-#include <QTimer>
-#include <QVBoxLayout>
-#include <QWidget>
-#include <algorithm>
-#include <cmath>
 
+#include "analogmeterwidget.h"
+#include "devicepanel.h"
 #include "discoverydialog.h"
-#include "filtertable.h"
 #include "newprotocol.h"
 #include "oldprotocol.h"
 #include "panadapterwidget.h"
-#include "rxaudio.h"
-#include "spectrumanalyzer.h"
+#include "radioconnection.h"
+#include "receiverpanel.h"
+#include "settingsdialog.h"
 #include "toolbarwidget.h"
 #include "vfopanel.h"
-#include "waterfallwidget.h"
+#include "widebandpanel.h"
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *radioMenu = menuBar()->addMenu(tr("&Radio"));
@@ -39,157 +37,176 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     radioMenu->addSeparator();
 
+    m_rx2EnabledAction = radioMenu->addAction(tr("Enable &RX2"));
+    m_rx2EnabledAction->setCheckable(true);
+    m_rx2EnabledAction->setToolTip(
+        tr("A second, independently-tuned receiver sharing the same physical ADC (Protocol 2 only) - "
+           "see RadioConnection::setRx2Enabled()."));
+
+    radioMenu->addSeparator();
+
     auto *exitAction = radioMenu->addAction(tr("E&xit"));
     connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
 
-    // Layout mirrors deskHPSDR's radio_create_visual() stacking order
-    // (core/deskhpsdr-src/radio.c): VFO bar, then the receiver panel
-    // (panadapter above waterfall, sharing the frequency axis), then the
-    // band/gain toolbar (deskHPSDR's "sliders" bar sits below the
-    // receiver panel too). Zoom/pan isn't ported yet.
-    m_vfoPanel = new VfoPanel(this);
+    // Gear-menu convention ("Settings"): a single, always-available top-
+    // level menu rather than burying it under Radio - see SettingsDialog's
+    // class comment for scope/rationale.
+    auto *settingsMenu = menuBar()->addMenu(tr("&Settings"));
+    auto *settingsAction = settingsMenu->addAction(tr("⚙ Preferences..."));
+    connect(settingsAction, &QAction::triggered, this, &MainWindow::showSettingsDialog);
 
-    m_panadapter = new PanadapterWidget(this);
-    m_waterfall = new WaterfallWidget(this);
+    // Three independently movable/floatable/tabbable docks - see the plan
+    // this replaced (a single central QSplitter with one receiver) and
+    // ReceiverPanel/WidebandPanel's own class comments. Default layout:
+    // Wideband spans the top, RX1/RX2 side by side below it - user-
+    // requested via an HTML mockup comparison, see the project's own
+    // memory notes.
+    m_rx1 = new ReceiverPanel(0, tr("RX1"), this);
+    m_rx2 = new ReceiverPanel(1, tr("RX2"), this);
+    m_wideband = new WidebandPanel(this);
+    m_rx1->setDevicePanel(m_wideband->devicePanel());
+    m_rx2->setDevicePanel(m_wideband->devicePanel());
 
-    auto *splitter = new QSplitter(Qt::Vertical, this);
-    splitter->addWidget(m_panadapter);
-    splitter->addWidget(m_waterfall);
-    splitter->setStretchFactor(0, 2);
-    splitter->setStretchFactor(1, 1);
+    auto *rx1Dock = new QDockWidget(tr("RX1"), this);
+    rx1Dock->setObjectName(QStringLiteral("rx1Dock"));
+    rx1Dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+                          QDockWidget::DockWidgetClosable);
+    rx1Dock->setWidget(m_rx1);
 
-    m_toolbar = new ToolbarWidget(this);
+    auto *rx2Dock = new QDockWidget(tr("RX2"), this);
+    rx2Dock->setObjectName(QStringLiteral("rx2Dock"));
+    rx2Dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+                          QDockWidget::DockWidgetClosable);
+    rx2Dock->setWidget(m_rx2);
+    // RX2 starts disabled - see m_rx2EnabledAction - so no DDC1 traffic or
+    // second RxAudioChannel is paid for until the user actually wants it.
+    rx2Dock->setVisible(false);
 
-    auto *central = new QWidget(this);
-    auto *layout = new QVBoxLayout(central);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    layout->addWidget(m_vfoPanel);
-    layout->addWidget(splitter, /*stretch=*/1);
-    layout->addWidget(m_toolbar);
-    setCentralWidget(central);
+    auto *widebandDock = new QDockWidget(tr("Wideband"), this);
+    widebandDock->setObjectName(QStringLiteral("widebandDock"));
+    widebandDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+                               QDockWidget::DockWidgetClosable);
+    widebandDock->setWidget(m_wideband);
 
-    connect(m_vfoPanel, &VfoPanel::frequencyEditedHz, this, [this](double hz) { retuneTo(hz); });
-    connect(m_panadapter, &PanadapterWidget::frequencyClicked, this, [this](double hz) { retuneTo(hz); });
-    connect(m_vfoPanel, &VfoPanel::modeSelected, this, [this](RxMode mode) {
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, mode]() { m_rxAudio->setMode(mode); }, Qt::QueuedConnection);
+    // Analog S-meters - own floating docks, not embedded in VfoPanel (see
+    // mainwindow.h's comment on why). Hidden by default; SettingsDialog's
+    // Meter tab toggles both together.
+    m_rx1MeterWidget = new AnalogMeterWidget(this);
+    m_rx1MeterDock = new QDockWidget(tr("RX1 Meter"), this);
+    m_rx1MeterDock->setObjectName(QStringLiteral("rx1MeterDock"));
+    m_rx1MeterDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+                                 QDockWidget::DockWidgetClosable);
+    m_rx1MeterDock->setWidget(m_rx1MeterWidget);
+    addDockWidget(Qt::RightDockWidgetArea, m_rx1MeterDock);
+    m_rx1MeterDock->setFloating(true);
+    m_rx1MeterDock->setVisible(false);
+    connect(m_rx1, &ReceiverPanel::meterDbmChanged, m_rx1MeterWidget, &AnalogMeterWidget::setDbm);
+
+    m_rx2MeterWidget = new AnalogMeterWidget(this);
+    m_rx2MeterDock = new QDockWidget(tr("RX2 Meter"), this);
+    m_rx2MeterDock->setObjectName(QStringLiteral("rx2MeterDock"));
+    m_rx2MeterDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+                                 QDockWidget::DockWidgetClosable);
+    m_rx2MeterDock->setWidget(m_rx2MeterWidget);
+    addDockWidget(Qt::RightDockWidgetArea, m_rx2MeterDock);
+    m_rx2MeterDock->setFloating(true);
+    m_rx2MeterDock->setVisible(false);
+    connect(m_rx2, &ReceiverPanel::meterDbmChanged, m_rx2MeterWidget, &AnalogMeterWidget::setDbm);
+
+    // AllowNestedDocks is what lets the user drag a floated panel back and
+    // drop it beside another one to recreate a side-by-side split - without
+    // it, only tabbing (AllowTabbedDocks) works from the GUI, and a
+    // once-floated panel can't be re-docked side-by-side at all.
+    setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks);
+    // Corner ownership: give the top corners to the Top area so
+    // widebandDock spans the full width, and the bottom corners to
+    // Left/Right so rx1Dock/rx2Dock fill the remaining space side by side
+    // underneath it - more reliable than splitDockWidget() from a single
+    // Bottom-area slot, which doesn't consistently honor the requested
+    // orientation when the second widget starts hidden (see rx2Dock's
+    // setVisible(false) below).
+    setCorner(Qt::TopLeftCorner, Qt::TopDockWidgetArea);
+    setCorner(Qt::TopRightCorner, Qt::TopDockWidgetArea);
+    setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+    addDockWidget(Qt::TopDockWidgetArea, widebandDock);
+    addDockWidget(Qt::LeftDockWidgetArea, rx1Dock);
+    addDockWidget(Qt::RightDockWidgetArea, rx2Dock);
+    resizeDocks({widebandDock}, {200}, Qt::Vertical);
+
+    connect(m_rx2EnabledAction, &QAction::toggled, this, [this, rx2Dock](bool enabled) {
+        rx2Dock->setVisible(enabled);
+        if (!m_connection) {
+            return;
         }
-        // repopulateFilterCombo() (called from setRxMode(), which already
-        // ran by the time this signal fires) picks the new mode's default
-        // filter without emitting filterSelected() - sync the panadapter's
-        // passband shading explicitly here instead of relying on that
-        // signal for this particular case.
-        const FilterEntry f = m_vfoPanel->currentFilter();
-        m_panadapter->setPassband(f.low, f.high);
-        updateBandStack();
-    });
-    connect(m_vfoPanel, &VfoPanel::filterSelected, this, [this](double lowHz, double highHz) {
-        if (m_rxAudio) {
+        QMetaObject::invokeMethod(
+            m_connection, [this, enabled]() { m_connection->setRx2Enabled(enabled); }, Qt::QueuedConnection);
+        if (enabled) {
+            m_rx2->startAudio(m_workerThread, m_rx2->toolbar()->sampleRateHz(), m_connection,
+                               /*useSecondDdc=*/true);
+            connect(m_rx2, &ReceiverPanel::audioBlockReady, m_audioSink,
+                    [this](const QVector<float> &block) {
+                        m_rx2Block = block;
+                    });
+            const double hz = m_rx2->frequencyHz();
+            const int rateHz = m_rx2->toolbar()->sampleRateHz();
             QMetaObject::invokeMethod(
-                m_rxAudio, [this, lowHz, highHz]() { m_rxAudio->setPassband(lowHz, highHz); },
+                m_connection,
+                [this, hz, rateHz]() {
+                    m_connection->setRxFrequency2(hz);
+                    m_connection->setRxSampleRate2(rateHz);
+                },
                 Qt::QueuedConnection);
+            m_rx2->setConnected(true);
+        } else {
+            m_rx2->stopAudio();
+            m_rx2->setConnected(false);
+            m_rx2Block.clear();
         }
-        m_panadapter->setPassband(lowHz, highHz);
-        updateBandStack();
     });
-    connect(m_vfoPanel, &VfoPanel::attenuationChanged, this, [this](int db) {
+
+    connect(m_rx1, &ReceiverPanel::frequencyChanged, this, [this](double hz) {
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, hz]() { m_connection->setRxFrequency(hz); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_rx2, &ReceiverPanel::frequencyChanged, this, [this](double hz) {
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, hz]() { m_connection->setRxFrequency2(hz); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_rx1, &ReceiverPanel::sampleRateChanged, this, [this](int hz) {
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, hz]() { m_connection->setRxSampleRate(hz); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_rx2, &ReceiverPanel::sampleRateChanged, this, [this](int hz) {
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, hz]() { m_connection->setRxSampleRate2(hz); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_rx1, &ReceiverPanel::statusMessage, this, [this](const QString &msg) { statusBar()->showMessage(msg); });
+    connect(m_rx2, &ReceiverPanel::statusMessage, this, [this](const QString &msg) { statusBar()->showMessage(msg); });
+
+    DevicePanel *devicePanel = m_wideband->devicePanel();
+    connect(devicePanel, &DevicePanel::attenuationChanged, this, [this](int db) {
         if (m_connection) {
             QMetaObject::invokeMethod(
                 m_connection, [this, db]() { m_connection->setAttenuation(db); }, Qt::QueuedConnection);
         }
     });
-    connect(m_toolbar, &ToolbarWidget::bandSelected, this, [this](int bandIndex, double centerHz) {
-        // Recall that band's last-used frequency/mode/filter if we have
-        // one (see BandStackEntry/updateBandStack()); otherwise fall back
-        // to the band center + a sensible band-plan-default mode, same as
-        // before this existed. A plain typed/clicked/wheeled frequency
-        // change (not a band switch) leaves the current mode alone.
-        const auto it = m_bandStack.constFind(bandIndex);
-        const bool haveEntry = it != m_bandStack.constEnd();
-        const double hz = haveEntry ? it->frequencyHz : centerHz;
-        const RxMode mode = haveEntry ? RxMode(it->mode) : defaultModeForFrequency(centerHz);
-
-        // Mode/filter before retuneTo(): it calls updateBandStack() at the
-        // end, which would otherwise capture the *old* mode/filter against
-        // the *new* frequency and immediately clobber the entry we just
-        // looked up.
-        m_vfoPanel->setRxMode(mode);
-        if (haveEntry) {
-            m_vfoPanel->setFilterIndex(it->filterIndex);
-        }
-        retuneTo(hz);
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, mode]() { m_rxAudio->setMode(mode); }, Qt::QueuedConnection);
-        }
-        const FilterEntry f = m_vfoPanel->currentFilter();
-        m_panadapter->setPassband(f.low, f.high);
-        if (haveEntry && m_rxAudio) {
-            // setMode() above already re-applied its own default filter
-            // for the new mode - override with the specific one we saved.
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, f]() { m_rxAudio->setPassband(f.low, f.high); }, Qt::QueuedConnection);
-        }
-    });
-    connect(m_toolbar, &ToolbarWidget::afGainChanged, this, [this](double dB) {
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, dB]() { m_rxAudio->setAfGain(dB); }, Qt::QueuedConnection);
-        }
-    });
-    connect(m_toolbar, &ToolbarWidget::agcModeChanged, this, [this](AgcMode mode) {
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, mode]() { m_rxAudio->setAgcMode(mode); }, Qt::QueuedConnection);
-        }
-    });
-    connect(m_toolbar, &ToolbarWidget::agcTopChanged, this, [this](double dB) {
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, dB]() { m_rxAudio->setAgcTop(dB); }, Qt::QueuedConnection);
-        }
-    });
-    connect(m_toolbar, &ToolbarWidget::noiseBlankerChanged, this, [this](NoiseBlankerMode mode) {
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, mode]() { m_rxAudio->setNoiseBlanker(mode); }, Qt::QueuedConnection);
-        }
-        m_vfoPanel->setNoiseBlankerLabel(m_toolbar->currentNoiseBlankerLabel());
-    });
-    connect(m_toolbar, &ToolbarWidget::noiseReductionChanged, this, [this](NoiseReductionMode mode) {
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, mode]() { m_rxAudio->setNoiseReduction(mode); }, Qt::QueuedConnection);
-        }
-    });
-    connect(m_toolbar, &ToolbarWidget::autoNotchChanged, this, [this](bool enabled) {
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, enabled]() { m_rxAudio->setAutoNotch(enabled); }, Qt::QueuedConnection);
-        }
-    });
-    connect(m_toolbar, &ToolbarWidget::spectralNoiseBlankerChanged, this, [this](bool enabled) {
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, enabled]() { m_rxAudio->setSpectralNoiseBlanker(enabled); }, Qt::QueuedConnection);
-        }
-    });
-    connect(m_toolbar, &ToolbarWidget::nr4SmoothingChanged, this, [this](double percent) {
-        if (m_rxAudio) {
-            QMetaObject::invokeMethod(
-                m_rxAudio, [this, percent]() { m_rxAudio->setNr4SmoothingFactor(percent); }, Qt::QueuedConnection);
-        }
-    });
-    connect(m_toolbar, &ToolbarWidget::filterBoardEnabledChanged, this, [this](bool enabled) {
+    connect(devicePanel, &DevicePanel::filterBoardEnabledChanged, this, [this](bool enabled) {
         if (m_connection) {
             QMetaObject::invokeMethod(
                 m_connection, [this, enabled]() { m_connection->setFilterBoardEnabled(enabled); },
                 Qt::QueuedConnection);
         }
     });
-    connect(m_toolbar, &ToolbarWidget::widebandEnabledChanged, this, [this](bool enabled) {
+    connect(devicePanel, &DevicePanel::widebandEnabledChanged, this, [this](bool enabled) {
         if (m_connection) {
             QMetaObject::invokeMethod(
                 m_connection, [this, enabled]() { m_connection->setWidebandEnabled(enabled); },
@@ -197,131 +214,49 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         }
     });
 
-    m_spectrum = new SpectrumAnalyzer(this);
-    connect(m_spectrum, &SpectrumAnalyzer::spectrumReady, this, [this](const QVector<float> &db) {
-        // Just store it - painting happens on m_repaintTimer's own fixed
-        // schedule (see below and repaintDisplays()), decoupled from
-        // whatever rate frames actually arrive at.
-        m_latestSpectrum = db;
-        m_spectrumDirty = true;
+    // Created eagerly (not lazily on first "Preferences..." click) so its
+    // checkboxes/spinboxes hold real state - and the signals below are
+    // live - even before the user ever opens it, e.g. right after
+    // loadSettings() restores a saved value. Parented to `this` but never
+    // shown until showSettingsDialog() - see that method's comment.
+    m_settingsDialog = new SettingsDialog(this);
+    connect(m_settingsDialog, &SettingsDialog::adcDitherChanged, this, [this](bool enabled) {
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, enabled]() { m_connection->setAdcDither(enabled); }, Qt::QueuedConnection);
+        }
     });
-    loadSettings();
-    m_panadapter->setCenterFrequencyHz(m_vfoPanel->frequencyHz());
-    m_panadapter->setSampleRateHz(48000.0);
-    m_toolbar->setFrequencyHz(m_vfoPanel->frequencyHz());
-    m_vfoPanel->setBandLabel(m_toolbar->currentBandLabel());
-    m_vfoPanel->setNoiseBlankerLabel(m_toolbar->currentNoiseBlankerLabel());
-    {
-        const FilterEntry f = m_vfoPanel->currentFilter();
-        m_panadapter->setPassband(f.low, f.high);
-    }
+    connect(m_settingsDialog, &SettingsDialog::adcRandomChanged, this, [this](bool enabled) {
+        if (m_connection) {
+            QMetaObject::invokeMethod(
+                m_connection, [this, enabled]() { m_connection->setAdcRandom(enabled); }, Qt::QueuedConnection);
+        }
+    });
+    connect(m_settingsDialog, &SettingsDialog::peakHoldChanged, this,
+            [this](bool enabled, double holdTimeSec, double dropDbPerSec) {
+                for (PanadapterWidget *pan : {m_rx1->panadapter(), m_rx2->panadapter(), m_wideband->panadapter()}) {
+                    pan->setPeakHoldParams(holdTimeSec, dropDbPerSec);
+                    pan->setPeakHoldEnabled(enabled);
+                }
+            });
+    connect(m_settingsDialog, &SettingsDialog::analogMeterChanged, this, [this](bool enabled) {
+        m_rx1MeterDock->setVisible(enabled);
+        m_rx2MeterDock->setVisible(enabled);
+    });
+    connect(m_settingsDialog, &SettingsDialog::s9DbmChanged, this, [this](double dbm) {
+        m_rx1->vfoPanel()->setS9Dbm(dbm);
+        m_rx2->vfoPanel()->setS9Dbm(dbm);
+        m_rx1MeterWidget->setS9Dbm(dbm);
+        m_rx2MeterWidget->setS9Dbm(dbm);
+    });
 
-    // Painting on every incoming spectrum frame (~23/s) made each frame's
-    // handler expensive enough (grid+trace redraw, waterfall image scroll,
-    // widget repaint) to noticeably starve the GUI event loop. A repaint
-    // timer, rate user-adjustable via the toolbar's FPS combo (default
-    // 20fps), bounds that cost regardless of how fast frames actually
-    // arrive.
-    m_repaintTimer = new QTimer(this);
-    m_repaintTimer->setInterval(1000 / m_toolbar->fps());
-    connect(m_repaintTimer, &QTimer::timeout, this, &MainWindow::repaintDisplays);
-    connect(m_toolbar, &ToolbarWidget::fpsChanged, this,
-            [this](int fps) { m_repaintTimer->setInterval(1000 / qMax(1, fps)); });
-    m_repaintTimer->start();
+    loadSettings();
 
     m_workerThread = new QThread(this);
     m_workerThread->setObjectName("QhpsdrWorker");
     m_workerThread->start();
 
-    // The panadapter FFT (m_spectrum) is independent of WDSP audio demod
-    // (m_workerThread) - both just read the same raw I/Q, neither depends
-    // on the other's output - so it gets its own thread/core rather than
-    // sharing one.
-    m_spectrumThread = new QThread(this);
-    m_spectrumThread->setObjectName("QhpsdrSpectrum");
-    m_spectrumThread->start();
-
     statusBar()->showMessage(tr("Qhpsdr Ready."));
-}
-
-void MainWindow::repaintDisplays() {
-    if (!m_spectrumDirty) {
-        return;
-    }
-    m_spectrumDirty = false;
-    if (m_toolbar->widebandEnabled()) {
-        // The wideband full-band sweep (RadioConnection::wideSpectrumReady,
-        // connected in connectToDevice()) drives the panadapter/waterfall
-        // directly while this is on - don't also overwrite them with the
-        // narrow DDC-based feed below.
-        return;
-    }
-
-    // Zoom: show only the center slice of the full received span, stretched
-    // across the same widget width - see ToolbarWidget::zoomFactor(). Both
-    // widgets stay entirely zoom-unaware: they just draw whatever spectrum
-    // array + sample rate they're given, so cropping here is the only
-    // change needed.
-    const int zoom = qBound(1, m_toolbar->zoomFactor(), m_latestSpectrum.isEmpty() ? 1 : m_latestSpectrum.size());
-    QVector<float> displaySpectrum = m_latestSpectrum;
-    double displaySampleRateHz = 48000.0;
-    if (zoom > 1 && !displaySpectrum.isEmpty()) {
-        const int n = displaySpectrum.size();
-        const int cropped = std::max(1, n / zoom);
-        const int start = (n - cropped) / 2;
-        displaySpectrum = displaySpectrum.mid(start, cropped);
-        displaySampleRateHz = 48000.0 / zoom;
-    }
-
-    // Auto-scale the displayed dB range to the actual incoming data
-    // instead of a fixed guess: real receive levels vary a lot with
-    // antenna/band/AGC settings, and a fixed range that doesn't match
-    // what's actually there just looks like flat "mush" with no visible
-    // contrast, even though the underlying spectrum is fine. Smoothed
-    // (not snapped per-frame) so the display doesn't jitter. Based on
-    // what's actually visible (the zoomed slice), not the full band.
-    if (!displaySpectrum.isEmpty()) {
-        float frameMin = displaySpectrum[0];
-        float frameMax = displaySpectrum[0];
-        for (float v : displaySpectrum) {
-            frameMin = std::min(frameMin, v);
-            frameMax = std::max(frameMax, v);
-        }
-        constexpr float kAlpha = 0.08f;
-        m_dbFloor += kAlpha * ((frameMin - 5.0f) - m_dbFloor);
-        m_dbCeil += kAlpha * ((frameMax + 8.0f) - m_dbCeil);
-        if (m_dbCeil - m_dbFloor < 20.0f) {
-            m_dbCeil = m_dbFloor + 20.0f;
-        }
-
-        // The waterfall's color mapping needs its own, differently-anchored
-        // range from the panadapter's: raw min/max (above) makes a single-
-        // frame FFT bin's noise (itself spiky - a few dB of per-bin
-        // variance even for flat noise, no averaging here) dominate the
-        // middle of the gradient, so the whole waterfall looked green with
-        // no contrast against real signals. Anchor to the *median* bin
-        // power instead (a stable noise-floor estimate, unlike min/max)
-        // and use a fixed span above it - background noise then sits in
-        // the gradient's black/blue end regardless of the band's absolute
-        // level, and only bins meaningfully stronger than the noise floor
-        // reach green/yellow/red.
-        QVector<float> sorted = displaySpectrum;
-        std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-        const float noiseFloor = sorted[sorted.size() / 2];
-        constexpr float kWaterfallSpanDb = 30.0f;
-        const float targetFloor = noiseFloor - 4.0f;
-        const float targetCeil = std::max(noiseFloor + kWaterfallSpanDb, frameMax + 3.0f);
-        m_waterfallFloor += kAlpha * (targetFloor - m_waterfallFloor);
-        m_waterfallCeil += kAlpha * (targetCeil - m_waterfallCeil);
-        if (m_waterfallCeil - m_waterfallFloor < 15.0f) {
-            m_waterfallCeil = m_waterfallFloor + 15.0f;
-        }
-    }
-    m_panadapter->setDbRange(m_dbFloor, m_dbCeil);
-    m_waterfall->setDbRange(m_waterfallFloor, m_waterfallCeil);
-    m_panadapter->setSampleRateHz(displaySampleRateHz);
-    m_panadapter->setSpectrum(displaySpectrum);
-    m_waterfall->pushSpectrum(displaySpectrum);
 }
 
 MainWindow::~MainWindow() {
@@ -331,91 +266,89 @@ MainWindow::~MainWindow() {
         m_workerThread->quit();
         m_workerThread->wait();
     }
-    if (m_spectrumThread) {
-        m_spectrumThread->quit();
-        m_spectrumThread->wait();
-    }
 }
 
 void MainWindow::saveSettings() {
     QSettings settings;
-    settings.beginGroup(QStringLiteral("vfo"));
-    settings.setValue(QStringLiteral("frequencyHz"), m_vfoPanel->frequencyHz());
-    settings.setValue(QStringLiteral("mode"), int(m_vfoPanel->rxMode()));
-    settings.setValue(QStringLiteral("filterIndex"), m_vfoPanel->currentFilterIndex());
-    settings.setValue(QStringLiteral("stepIndex"), m_vfoPanel->currentStepIndex());
-    settings.setValue(QStringLiteral("attenuationDb"), m_vfoPanel->attenuationDb());
-    settings.setValue(QStringLiteral("afGainDb"), m_toolbar->afGainDb());
-    settings.setValue(QStringLiteral("rfGainDb"), m_toolbar->rfGainDb());
-    settings.setValue(QStringLiteral("zoomFactor"), m_toolbar->zoomFactor());
-    settings.setValue(QStringLiteral("fps"), m_toolbar->fps());
-    settings.setValue(QStringLiteral("agcMode"), int(m_toolbar->agcMode()));
-    settings.setValue(QStringLiteral("agcTopDb"), m_toolbar->agcTopDb());
-    settings.setValue(QStringLiteral("noiseBlankerMode"), int(m_toolbar->noiseBlankerMode()));
-    settings.setValue(QStringLiteral("noiseReductionMode"), int(m_toolbar->noiseReductionMode()));
-    settings.setValue(QStringLiteral("autoNotchEnabled"), m_toolbar->autoNotchEnabled());
-    settings.setValue(QStringLiteral("spectralNoiseBlankerEnabled"), m_toolbar->spectralNoiseBlankerEnabled());
-    settings.setValue(QStringLiteral("nr4SmoothingFactor"), m_toolbar->nr4SmoothingFactor());
-    settings.setValue(QStringLiteral("filterBoardEnabled"), m_toolbar->filterBoardEnabled());
-    settings.setValue(QStringLiteral("widebandEnabled"), m_toolbar->widebandEnabled());
+    settings.beginGroup(QStringLiteral("rx1"));
+    m_rx1->saveSettings(settings);
+    settings.endGroup();
+    settings.beginGroup(QStringLiteral("rx2"));
+    m_rx2->saveSettings(settings);
     settings.endGroup();
 
-    settings.beginWriteArray(QStringLiteral("bandstack"));
-    int arrayIndex = 0;
-    for (auto it = m_bandStack.constBegin(); it != m_bandStack.constEnd(); ++it) {
-        settings.setArrayIndex(arrayIndex++);
-        settings.setValue(QStringLiteral("band"), it.key());
-        settings.setValue(QStringLiteral("frequencyHz"), it->frequencyHz);
-        settings.setValue(QStringLiteral("mode"), it->mode);
-        settings.setValue(QStringLiteral("filterIndex"), it->filterIndex);
-    }
-    settings.endArray();
+    DevicePanel *devicePanel = m_wideband->devicePanel();
+    settings.beginGroup(QStringLiteral("device"));
+    settings.setValue(QStringLiteral("rfGainDb"), devicePanel->rfGainDb());
+    settings.setValue(QStringLiteral("attenuationDb"), devicePanel->attenuationDb());
+    settings.setValue(QStringLiteral("filterBoardEnabled"), devicePanel->filterBoardEnabled());
+    settings.setValue(QStringLiteral("widebandEnabled"), devicePanel->widebandEnabled());
+    settings.endGroup();
+
+    settings.beginGroup(QStringLiteral("settings"));
+    settings.setValue(QStringLiteral("adcDither"), m_settingsDialog->adcDither());
+    settings.setValue(QStringLiteral("adcRandom"), m_settingsDialog->adcRandom());
+    settings.setValue(QStringLiteral("peakHoldEnabled"), m_settingsDialog->peakHoldEnabled());
+    settings.setValue(QStringLiteral("peakHoldTimeSec"), m_settingsDialog->peakHoldTimeSec());
+    settings.setValue(QStringLiteral("peakHoldDropDbPerSec"), m_settingsDialog->peakHoldDropDbPerSec());
+    settings.setValue(QStringLiteral("analogMeterEnabled"), m_settingsDialog->analogMeterEnabled());
+    settings.setValue(QStringLiteral("s9Dbm"), m_settingsDialog->s9Dbm());
+    settings.endGroup();
+
+    settings.beginGroup(QStringLiteral("app"));
+    settings.setValue(QStringLiteral("rx2Enabled"), m_rx2EnabledAction->isChecked());
+    // Versioned: bumped whenever the default dock layout changes in a way
+    // that makes an old saved arrangement stale (e.g. the RX1/RX2 side-by-
+    // side fix) - restoreState() below rejects a mismatched version, so a
+    // fixed default takes over instead of restoring a broken saved layout.
+    settings.setValue(QStringLiteral("windowState"), saveState(/*version=*/1));
+    settings.setValue(QStringLiteral("geometry"), saveGeometry());
+    settings.endGroup();
 }
 
 void MainWindow::loadSettings() {
     QSettings settings;
-    settings.beginGroup(QStringLiteral("vfo"));
-    if (!settings.contains(QStringLiteral("frequencyHz"))) {
-        settings.endGroup();
-        return; // First run - nothing saved yet, keep the built-in defaults.
-    }
-    m_vfoPanel->setFrequencyHz(settings.value(QStringLiteral("frequencyHz")).toDouble());
-    // Mode first: setRxMode() repopulates the filter combo to that mode's
-    // default list/selection, which the saved filterIndex then overrides.
-    m_vfoPanel->setRxMode(RxMode(settings.value(QStringLiteral("mode")).toInt()));
-    m_vfoPanel->setFilterIndex(settings.value(QStringLiteral("filterIndex")).toInt());
-    m_vfoPanel->setStepIndex(settings.value(QStringLiteral("stepIndex")).toInt());
-    m_vfoPanel->setAttenuationDb(settings.value(QStringLiteral("attenuationDb")).toInt());
-    m_toolbar->setAfGainDb(settings.value(QStringLiteral("afGainDb")).toDouble());
-    m_toolbar->setRfGainDb(settings.value(QStringLiteral("rfGainDb")).toDouble());
-    m_toolbar->setZoomFactor(settings.value(QStringLiteral("zoomFactor"), 1).toInt());
-    m_toolbar->setFps(settings.value(QStringLiteral("fps"), 20).toInt());
-    m_toolbar->setAgcMode(AgcMode(settings.value(QStringLiteral("agcMode"), int(AgcMode::Medium)).toInt()));
-    m_toolbar->setAgcTopDb(settings.value(QStringLiteral("agcTopDb"), 80.0).toDouble());
-    m_toolbar->setNoiseBlankerMode(
-        NoiseBlankerMode(settings.value(QStringLiteral("noiseBlankerMode"), int(NoiseBlankerMode::Off)).toInt()));
-    m_toolbar->setNoiseReductionMode(NoiseReductionMode(
-        settings.value(QStringLiteral("noiseReductionMode"), int(NoiseReductionMode::Off)).toInt()));
-    m_toolbar->setAutoNotchEnabled(settings.value(QStringLiteral("autoNotchEnabled"), false).toBool());
-    m_toolbar->setSpectralNoiseBlankerEnabled(
-        settings.value(QStringLiteral("spectralNoiseBlankerEnabled"), false).toBool());
-    m_toolbar->setNr4SmoothingFactor(settings.value(QStringLiteral("nr4SmoothingFactor"), 0.0).toDouble());
-    m_toolbar->setFilterBoardEnabled(settings.value(QStringLiteral("filterBoardEnabled"), false).toBool());
-    m_toolbar->setWidebandEnabled(settings.value(QStringLiteral("widebandEnabled"), false).toBool());
+    settings.beginGroup(QStringLiteral("rx1"));
+    m_rx1->loadSettings(settings);
+    settings.endGroup();
+    settings.beginGroup(QStringLiteral("rx2"));
+    m_rx2->loadSettings(settings);
     settings.endGroup();
 
-    m_bandStack.clear();
-    const int bandStackCount = settings.beginReadArray(QStringLiteral("bandstack"));
-    for (int i = 0; i < bandStackCount; ++i) {
-        settings.setArrayIndex(i);
-        const int band = settings.value(QStringLiteral("band")).toInt();
-        BandStackEntry entry;
-        entry.frequencyHz = settings.value(QStringLiteral("frequencyHz")).toDouble();
-        entry.mode = settings.value(QStringLiteral("mode")).toInt();
-        entry.filterIndex = settings.value(QStringLiteral("filterIndex")).toInt();
-        m_bandStack[band] = entry;
+    DevicePanel *devicePanel = m_wideband->devicePanel();
+    settings.beginGroup(QStringLiteral("device"));
+    devicePanel->setRfGainDb(settings.value(QStringLiteral("rfGainDb"), 0.0).toDouble());
+    devicePanel->setAttenuationDb(settings.value(QStringLiteral("attenuationDb"), 0).toInt());
+    devicePanel->setFilterBoardEnabled(settings.value(QStringLiteral("filterBoardEnabled"), false).toBool());
+    devicePanel->setWidebandEnabled(settings.value(QStringLiteral("widebandEnabled"), false).toBool());
+    settings.endGroup();
+
+    settings.beginGroup(QStringLiteral("settings"));
+    m_settingsDialog->setAdcDither(settings.value(QStringLiteral("adcDither"), false).toBool());
+    m_settingsDialog->setAdcRandom(settings.value(QStringLiteral("adcRandom"), false).toBool());
+    m_settingsDialog->setPeakHoldTimeSec(settings.value(QStringLiteral("peakHoldTimeSec"), 2.5).toDouble());
+    m_settingsDialog->setPeakHoldDropDbPerSec(
+        settings.value(QStringLiteral("peakHoldDropDbPerSec"), 6.0).toDouble());
+    m_settingsDialog->setPeakHoldEnabled(settings.value(QStringLiteral("peakHoldEnabled"), false).toBool());
+    m_settingsDialog->setAnalogMeterEnabled(settings.value(QStringLiteral("analogMeterEnabled"), false).toBool());
+    m_settingsDialog->setS9Dbm(settings.value(QStringLiteral("s9Dbm"), -73.0).toDouble());
+    settings.endGroup();
+
+    settings.beginGroup(QStringLiteral("app"));
+    m_rx2EnabledAction->setChecked(settings.value(QStringLiteral("rx2Enabled"), false).toBool());
+    if (settings.contains(QStringLiteral("windowState"))) {
+        restoreState(settings.value(QStringLiteral("windowState")).toByteArray(), /*version=*/1);
     }
-    settings.endArray();
+    if (settings.contains(QStringLiteral("geometry"))) {
+        restoreGeometry(settings.value(QStringLiteral("geometry")).toByteArray());
+    }
+    settings.endGroup();
+}
+
+void MainWindow::showSettingsDialog() {
+    m_settingsDialog->show();
+    m_settingsDialog->raise();
+    m_settingsDialog->activateWindow();
 }
 
 void MainWindow::showDiscoveryDialog() {
@@ -435,103 +368,24 @@ void MainWindow::showDiscoveryDialog() {
 void MainWindow::connectToDevice(const DiscoveredDevice &device) {
     disconnectFromRadio();
 
-    // No parent on any of these four: QObject::moveToThread() refuses
-    // objects that have one. m_spectrum was already parented to `this`
-    // earlier in the constructor (it's created once, up front, unlike the
-    // others which get recreated per connection) - move it along too. It
-    // goes to m_spectrumThread, not m_workerThread - see the class
-    // comment in mainwindow.h.
-    m_spectrum->setParent(nullptr);
-    m_spectrum->moveToThread(m_spectrumThread);
-
-    // QAudioSink also goes on m_workerThread rather than staying on the
-    // GUI thread: write() can block waiting for buffer space, and doing
-    // that from a GUI-thread slot (as a queued response to
-    // audioBlockReady) stalled the event loop just as badly as the DSP
-    // work itself did before that got moved off. It's created here,
-    // freshly, instead of a QObject subclass constructor, so there's
-    // nowhere upstream that could accidentally parent it to `this` again.
+    // QAudioSink lives on m_workerThread rather than the GUI thread:
+    // write() can block waiting for buffer space, and doing that from a
+    // GUI-thread slot stalled the event loop just as badly as the DSP
+    // work itself did before that got moved off. Created fresh here
+    // (not a QObject subclass constructor) so nothing upstream could
+    // accidentally parent it back to `this`.
     QAudioFormat format;
     format.setSampleRate(48000);
     format.setChannelCount(2);
     format.setSampleFormat(QAudioFormat::Float);
     m_audioSink = new QAudioSink(QMediaDevices::defaultAudioOutput(), format);
     m_audioSink->moveToThread(m_workerThread);
-
-    m_rxAudio = new RxAudioChannel();
-    m_rxAudio->moveToThread(m_workerThread);
-    connect(m_rxAudio, &RxAudioChannel::opened, this, [this]() {
-        statusBar()->showMessage(tr("Audio engine ready."));
-        // finishOpen() applies a hardcoded AM baseline before m_open flips
-        // true (see rxaudio.cpp) - re-apply the VFO panel's actual mode
-        // now that the channel is guaranteed open, rather than racing it
-        // right after open() like this used to (setMode() silently no-ops
-        // while m_open is still false, so it could lose to that baseline
-        // depending on how long OpenChannel()/FFTW planning took).
-        QMetaObject::invokeMethod(
-            m_rxAudio, [this]() { m_rxAudio->setMode(m_vfoPanel->rxMode()); }, Qt::QueuedConnection);
-        // Same race, same fix, for whatever AGC mode/gain and noise
-        // blanker setting the toolbar already holds (e.g. restored from
-        // saved settings) - finishOpen() only applies its own AGC_MEDIUM/
-        // NB-off baseline.
-        const AgcMode agcMode = m_toolbar->agcMode();
-        const double agcTop = m_toolbar->agcTopDb();
-        const NoiseBlankerMode nbMode = m_toolbar->noiseBlankerMode();
-        const NoiseReductionMode nrMode = m_toolbar->noiseReductionMode();
-        const bool anfEnabled = m_toolbar->autoNotchEnabled();
-        const bool snbEnabled = m_toolbar->spectralNoiseBlankerEnabled();
-        const double nr4Smoothing = m_toolbar->nr4SmoothingFactor();
-        QMetaObject::invokeMethod(
-            m_rxAudio,
-            [this, agcMode, agcTop, nbMode, nrMode, anfEnabled, snbEnabled, nr4Smoothing]() {
-                m_rxAudio->setAgcMode(agcMode);
-                m_rxAudio->setAgcTop(agcTop);
-                m_rxAudio->setNoiseBlanker(nbMode);
-                // Before setNoiseReduction(): if nrMode is Sbnr, its branch
-                // reads the smoothing value already stored on m_rxAudio.
-                m_rxAudio->setNr4SmoothingFactor(nr4Smoothing);
-                m_rxAudio->setNoiseReduction(nrMode);
-                m_rxAudio->setAutoNotch(anfEnabled);
-                m_rxAudio->setSpectralNoiseBlanker(snbEnabled);
-            },
-            Qt::QueuedConnection);
-    });
-    connect(m_rxAudio, &RxAudioChannel::buildingWisdom, this, [this]() {
-        statusBar()->showMessage(
-            tr("Building FFT cache (one-time, can take several minutes) - audio starts once this finishes..."));
-    });
-    // Direct (same-thread) connection: the actual audio write happens
-    // right there on the worker thread, not bounced through the GUI
-    // thread. The VFO meter still needs the GUI thread (it's a widget),
-    // so that's a second, separate connection below with `this` as
-    // context - cheap to marshal (one QVector<float> copy), unlike a
-    // blocking QAudioSink::write() call would have been.
-    connect(m_rxAudio, &RxAudioChannel::audioBlockReady, m_rxAudio,
-            [this](const QVector<float> &block) { playAudioBlock(block); });
-    connect(m_rxAudio, &RxAudioChannel::meterUpdated, this, [this](double dbm) {
-        // Compensate for whatever ADC0 attenuation is currently dialed in,
-        // so raising it to fight front-end overload doesn't make the
-        // meter falsely read a weaker signal - see VfoPanel::attenuationDb().
-        // Also fold in the toolbar's RF gain calibration offset - see
-        // ToolbarWidget::rfGainDb(). Subtracted, not added: matches
-        // core/deskhpsdr-src/receiver.c's rx_update_display() formula
-        // ("level += calib + attenuation - adc[rx->adc].gain") - more RF
-        // gain means the same real signal reads hotter internally, so it
-        // has to come back out to stay calibrated.
-        m_vfoPanel->setSignalDbm(dbm + m_vfoPanel->attenuationDb() - m_toolbar->rfGainDb());
-    });
     QMetaObject::invokeMethod(
-        m_rxAudio,
-        [this]() {
-            m_audioDevice = m_audioSink->start();
-            m_rxAudio->open(/*channel=*/0, /*inputSampleRate=*/48000);
-        },
-        Qt::QueuedConnection);
-    statusBar()->showMessage(tr("Opening audio engine..."));
+        m_audioSink, [this]() { m_audioDevice = m_audioSink->start(); }, Qt::QueuedConnection);
 
     // Which wire protocol a device speaks only changes which concrete
     // RadioConnection subclass gets constructed here - everything else
-    // (signal wiring, thread affinity, audio/spectrum feed) is identical
+    // (signal wiring, thread affinity, per-receiver I/Q feed) is identical
     // since both implement the same RadioConnection interface.
     if (device.protocol == NEW_PROTOCOL) {
         m_connection = new NewProtocolConnection();
@@ -549,112 +403,90 @@ void MainWindow::connectToDevice(const DiscoveredDevice &device) {
     connect(m_connection, &RadioConnection::errorOccurred, this, [this](const QString &msg) {
         statusBar()->showMessage(tr("Radio connection error: %1").arg(msg));
     });
-    // Two separate connections, not one lambda doing both feeds: context
-    // m_rxAudio (worker-thread-affine) makes the first a same-thread
-    // direct connection since the emitter (m_connection) is also on
-    // m_workerThread, so WDSP demod work happens right there. Context
-    // m_spectrum is on the *different* m_spectrumThread, so that one is a
-    // genuinely separate, automatically-queued cross-thread delivery -
-    // the FFT runs concurrently with audio demod instead of competing for
-    // the same thread's time. Neither bounces to the GUI thread just
-    // because the lambdas were written with `this` captured for other
-    // members - the connection's context object is what determines which
-    // thread actually runs it, not what the lambda captures.
-    connect(m_connection, &RadioConnection::iqSamplesReady, m_rxAudio, [this](const QVector<double> &iq) {
-        for (int i = 0; i + 1 < iq.size(); i += 2) {
-            m_rxAudio->feedSample(iq[i], iq[i + 1]);
-        }
-    });
-    connect(m_connection, &RadioConnection::iqSamplesReady, m_spectrum, [this](const QVector<double> &iq) {
-        for (int i = 0; i + 1 < iq.size(); i += 2) {
-            m_spectrum->feedSample(iq[i], iq[i + 1]);
-        }
-    });
     // GUI-thread context (`this`) - Qt auto-queues this across threads,
-    // same as statsUpdated/errorOccurred above. Only fires while
-    // ToolbarWidget::widebandEnabled() is on (NewProtocolConnection only
-    // emits it then); repaintDisplays() skips its own narrow-band feed
-    // while that's the case, so the two don't fight over the same widgets.
+    // same as statsUpdated/errorOccurred above. Only fires while the
+    // shared DevicePanel's widebandEnabled() is on.
     connect(m_connection, &RadioConnection::wideSpectrumReady, this,
             [this](const QVector<float> &magnitudesDb, double sampleRateHz) {
-                if (magnitudesDb.isEmpty()) {
-                    return;
-                }
-                float frameMin = magnitudesDb[0];
-                float frameMax = magnitudesDb[0];
-                for (float v : magnitudesDb) {
-                    frameMin = std::min(frameMin, v);
-                    frameMax = std::max(frameMax, v);
-                }
-                m_panadapter->setDbRange(frameMin - 5.0f, frameMax + 8.0f);
-                m_waterfall->setDbRange(frameMin - 5.0f, frameMax + 8.0f);
-                m_panadapter->setCenterFrequencyHz(sampleRateHz / 2.0);
-                m_panadapter->setSampleRateHz(sampleRateHz);
-                m_panadapter->setSpectrum(magnitudesDb);
-                m_waterfall->pushSpectrum(magnitudesDb);
+                m_wideband->setSpectrum(magnitudesDb, sampleRateHz);
             });
 
+    m_rx1->startAudio(m_workerThread, m_rx1->toolbar()->sampleRateHz(), m_connection, /*useSecondDdc=*/false);
+    connect(m_rx1, &ReceiverPanel::audioBlockReady, m_audioSink, [this](const QVector<float> &block) {
+        m_rx1Block = block;
+        mixAndPlayAudio();
+    });
+    const bool rx2Enabled = m_rx2EnabledAction->isChecked();
+    if (rx2Enabled) {
+        m_rx2->startAudio(m_workerThread, m_rx2->toolbar()->sampleRateHz(), m_connection, /*useSecondDdc=*/true);
+        connect(m_rx2, &ReceiverPanel::audioBlockReady, m_audioSink,
+                [this](const QVector<float> &block) { m_rx2Block = block; });
+    }
+
     QMetaObject::invokeMethod(
-        m_connection, [this, device]() { m_connection->connectToDevice(device, m_vfoPanel->frequencyHz()); },
+        m_connection, [this, device]() { m_connection->connectToDevice(device, m_rx1->frequencyHz()); },
         Qt::QueuedConnection);
     // A fresh connection object always starts with filterBoardEnabled/
-    // widebandEnabled=false internally - re-push whatever the toolbar
-    // currently holds (e.g. restored from saved settings) rather than
-    // silently resetting it.
+    // widebandEnabled/rx2Enabled=false internally - re-push whatever the
+    // shared DevicePanel/menu currently hold (e.g. restored from saved
+    // settings) rather than silently resetting them.
     {
-        const bool filterBoardEnabled = m_toolbar->filterBoardEnabled();
+        DevicePanel *devicePanel = m_wideband->devicePanel();
+        const bool filterBoardEnabled = devicePanel->filterBoardEnabled();
         QMetaObject::invokeMethod(
             m_connection, [this, filterBoardEnabled]() { m_connection->setFilterBoardEnabled(filterBoardEnabled); },
             Qt::QueuedConnection);
-        const bool widebandEnabled = m_toolbar->widebandEnabled();
+        const bool widebandEnabled = devicePanel->widebandEnabled();
         QMetaObject::invokeMethod(
             m_connection, [this, widebandEnabled]() { m_connection->setWidebandEnabled(widebandEnabled); },
             Qt::QueuedConnection);
+        const int attenuationDb = devicePanel->attenuationDb();
+        QMetaObject::invokeMethod(
+            m_connection, [this, attenuationDb]() { m_connection->setAttenuation(attenuationDb); },
+            Qt::QueuedConnection);
+        const int rx1RateHz = m_rx1->toolbar()->sampleRateHz();
+        QMetaObject::invokeMethod(
+            m_connection, [this, rx1RateHz]() { m_connection->setRxSampleRate(rx1RateHz); }, Qt::QueuedConnection);
+        if (rx2Enabled) {
+            const double rx2Hz = m_rx2->frequencyHz();
+            const int rx2RateHz = m_rx2->toolbar()->sampleRateHz();
+            QMetaObject::invokeMethod(
+                m_connection,
+                [this, rx2Hz, rx2RateHz]() {
+                    m_connection->setRx2Enabled(true);
+                    m_connection->setRxFrequency2(rx2Hz);
+                    m_connection->setRxSampleRate2(rx2RateHz);
+                },
+                Qt::QueuedConnection);
+        }
     }
-    m_vfoPanel->setConnected(true);
-    m_toolbar->setConnected(true);
-    {
-        const FilterEntry f = m_vfoPanel->currentFilter();
-        m_panadapter->setPassband(f.low, f.high);
+    m_rx1->setConnected(true);
+    if (rx2Enabled) {
+        m_rx2->setConnected(true);
     }
+    m_wideband->devicePanel()->setConnected(true);
     m_disconnectAction->setEnabled(true);
 }
 
-void MainWindow::playAudioBlock(const QVector<float> &interleavedStereo) {
+void MainWindow::mixAndPlayAudio() {
     if (!m_audioDevice) {
         return;
     }
-    m_audioDevice->write(reinterpret_cast<const char *>(interleavedStereo.constData()),
-                          interleavedStereo.size() * qint64(sizeof(float)));
-}
-
-void MainWindow::retuneTo(double hz) {
-    m_vfoPanel->setFrequencyHz(hz);
-    if (m_connection) {
-        QMetaObject::invokeMethod(
-            m_connection, [this, hz]() { m_connection->setRxFrequency(hz); }, Qt::QueuedConnection);
+    QVector<float> mixed = m_rx1Block;
+    if (!m_rx2Block.isEmpty() && m_rx2Block.size() == mixed.size()) {
+        for (int i = 0; i < mixed.size(); ++i) {
+            mixed[i] = qBound(-1.0f, mixed[i] + m_rx2Block[i], 1.0f);
+        }
     }
-    m_panadapter->setCenterFrequencyHz(hz);
-    m_toolbar->setFrequencyHz(hz);
-    m_vfoPanel->setBandLabel(m_toolbar->currentBandLabel());
-    updateBandStack();
-}
-
-void MainWindow::updateBandStack() {
-    const int bandIndex = m_toolbar->bandIndexForFrequency(m_vfoPanel->frequencyHz());
-    if (bandIndex < 0) {
-        return;
-    }
-    m_bandStack[bandIndex] = {m_vfoPanel->frequencyHz(), int(m_vfoPanel->rxMode()), m_vfoPanel->currentFilterIndex()};
+    m_audioDevice->write(reinterpret_cast<const char *>(mixed.constData()), mixed.size() * qint64(sizeof(float)));
 }
 
 void MainWindow::disconnectFromRadio() {
     if (m_connection) {
-        // Both calls run on the worker thread that owns these objects
-        // (see the class comment in mainwindow.h); deleteLater() is
-        // itself thread-safe to call from anywhere, but
-        // disconnectFromDevice()/close() aren't, so they're queued too -
-        // in the same invocation, so ordering is preserved.
+        // Both calls run on the worker thread that owns this object;
+        // deleteLater() is itself thread-safe to call from anywhere, but
+        // disconnectFromDevice() isn't, so it's queued too - in the same
+        // invocation, so ordering is preserved.
         RadioConnection *connection = m_connection;
         QMetaObject::invokeMethod(
             connection,
@@ -665,17 +497,8 @@ void MainWindow::disconnectFromRadio() {
             Qt::QueuedConnection);
         m_connection = nullptr;
     }
-    if (m_rxAudio) {
-        RxAudioChannel *rxAudio = m_rxAudio;
-        QMetaObject::invokeMethod(
-            rxAudio,
-            [rxAudio]() {
-                rxAudio->close();
-                rxAudio->deleteLater();
-            },
-            Qt::QueuedConnection);
-        m_rxAudio = nullptr;
-    }
+    m_rx1->stopAudio();
+    m_rx2->stopAudio();
     if (m_audioSink) {
         QAudioSink *audioSink = m_audioSink;
         QMetaObject::invokeMethod(
@@ -688,10 +511,11 @@ void MainWindow::disconnectFromRadio() {
         m_audioSink = nullptr;
         m_audioDevice = nullptr;
     }
-    m_vfoPanel->setConnected(false);
-    m_toolbar->setConnected(false);
-    m_vfoPanel->setSignalDbm(-140.0);
-    m_panadapter->setPassband(0.0, 0.0);
+    m_rx1Block.clear();
+    m_rx2Block.clear();
+    m_rx1->setConnected(false);
+    m_rx2->setConnected(false);
+    m_wideband->devicePanel()->setConnected(false);
     m_disconnectAction->setEnabled(false);
     statusBar()->showMessage(tr("Disconnected."));
 }

@@ -38,7 +38,46 @@ PanadapterWidget::PanadapterWidget(QWidget *parent) : QWidget(parent) {
 
 void PanadapterWidget::setSpectrum(const QVector<float> &magnitudesDb) {
     m_spectrum = magnitudesDb;
+
+    if (m_peakHoldEnabled && !m_spectrum.isEmpty()) {
+        if (m_peakHold.size() != m_spectrum.size()) {
+            // Bin count changed (e.g. zoom) - per-bin peak state no longer
+            // means anything, start fresh at this frame's own values.
+            m_peakHold = m_spectrum;
+            m_peakHoldAgeMs.assign(m_spectrum.size(), 0);
+            m_peakHoldClock.start();
+        } else {
+            const qint64 dtMs = m_peakHoldClock.isValid() ? m_peakHoldClock.restart() : 0;
+            const double dropThisFrame = m_peakHoldDropDbPerSec * (double(dtMs) / 1000.0);
+            const qint64 holdTimeMs = qint64(m_peakHoldTimeSec * 1000.0);
+            for (int i = 0; i < m_spectrum.size(); ++i) {
+                if (m_spectrum[i] >= m_peakHold[i]) {
+                    m_peakHold[i] = m_spectrum[i];
+                    m_peakHoldAgeMs[i] = 0;
+                } else {
+                    m_peakHoldAgeMs[i] += dtMs;
+                    if (m_peakHoldAgeMs[i] > holdTimeMs) {
+                        m_peakHold[i] = qMax(double(m_spectrum[i]), m_peakHold[i] - dropThisFrame);
+                    }
+                }
+            }
+        }
+    }
     update();
+}
+
+void PanadapterWidget::setPeakHoldEnabled(bool enabled) {
+    m_peakHoldEnabled = enabled;
+    if (!enabled) {
+        m_peakHold.clear();
+        m_peakHoldAgeMs.clear();
+    }
+    update();
+}
+
+void PanadapterWidget::setPeakHoldParams(double holdTimeSec, double dropDbPerSec) {
+    m_peakHoldTimeSec = holdTimeSec;
+    m_peakHoldDropDbPerSec = dropDbPerSec;
 }
 
 void PanadapterWidget::setCenterFrequencyHz(double hz) {
@@ -202,6 +241,21 @@ void PanadapterWidget::paintEvent(QPaintEvent *) {
     p.setPen(QPen(QColor(0xf2, 0xf6, 0xb0), 1));
     p.setBrush(Qt::NoBrush);
     p.drawPolyline(topLine);
+
+    // --- peak-hold overlay -------------------------------------------------
+    // Plain white/gray line above the live trace - visually distinct from
+    // the live yellow trace and the red/yellow/green fill, same idea as
+    // deskHPSDR's PEAKS & HOLD line (default color there is also a plain,
+    // neutral tone against the colored fill).
+    if (m_peakHoldEnabled && m_peakHold.size() == n) {
+        QPolygonF peakLine(plot.width());
+        for (int px = 0; px < plot.width(); ++px) {
+            const int bin = qBound(0, int(double(px) / plot.width() * n), n - 1);
+            peakLine[px] = QPointF(plot.left() + px, yFor(m_peakHold[bin]));
+        }
+        p.setPen(QPen(QColor(0xd8, 0xe6, 0xea, 220), 1));
+        p.drawPolyline(peakLine);
+    }
 
     p.setPen(QColor(0x40, 0x60, 0x70));
     p.drawRect(plot.adjusted(0, 0, -1, -1));

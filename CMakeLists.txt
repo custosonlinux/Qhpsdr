@@ -75,6 +75,16 @@ set(SOURCES
     include/waterfallwidget.h
     src/toolbarwidget.cpp
     include/toolbarwidget.h
+    src/devicepanel.cpp
+    include/devicepanel.h
+    src/receiverpanel.cpp
+    include/receiverpanel.h
+    src/widebandpanel.cpp
+    include/widebandpanel.h
+    src/analogmeterwidget.cpp
+    include/analogmeterwidget.h
+    src/settingsdialog.cpp
+    include/settingsdialog.h
 )
 
 qt_add_executable(Qhpsdr ${SOURCES})

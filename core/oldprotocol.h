@@ -62,6 +62,26 @@ public:
     // No-op: Protocol 1 has no wideband/full-band spectrum feature at all.
     void setWidebandEnabled(bool enabled) override { Q_UNUSED(enabled); }
 
+    // No-op: second-DDC support is Protocol 2 only (a plain single-ADC
+    // Hermes running Protocol 1 firmware only ever exposes one receiver
+    // over METIS). Never emits iqSamplesReady2().
+    void setRx2Enabled(bool enabled) override { Q_UNUSED(enabled); }
+    void setRxFrequency2(double hz) override { Q_UNUSED(hz); }
+    double rxFrequency2() const override { return 0.0; }
+
+    // No-op: Protocol 1 sample rate switching isn't wired up here yet -
+    // fixed at 48kHz, same as setAttenuation()'s "not wired up yet" note.
+    void setRxSampleRate(int hz) override { Q_UNUSED(hz); }
+    int rxSampleRate() const override { return 48000; }
+    void setRxSampleRate2(int hz) override { Q_UNUSED(hz); }
+    int rxSampleRate2() const override { return 48000; }
+
+    // No-op: ADC dither/random not wired up for Protocol 1 here yet.
+    void setAdcDither(bool enabled) override { Q_UNUSED(enabled); }
+    bool adcDither() const override { return false; }
+    void setAdcRandom(bool enabled) override { Q_UNUSED(enabled); }
+    bool adcRandom() const override { return false; }
+
 private slots:
     void readPendingDatagrams();
     void reportStats();

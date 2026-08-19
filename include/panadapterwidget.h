@@ -1,6 +1,7 @@
 #ifndef QHPSDR_PANADAPTERWIDGET_H
 #define QHPSDR_PANADAPTERWIDGET_H
 
+#include <QElapsedTimer>
 #include <QLinearGradient>
 #include <QPixmap>
 #include <QWidget>
@@ -30,6 +31,15 @@ public:
     // absolute - e.g. LSB's "2.9k" is roughly -3050..-150.
     void setPassband(double lowHz, double highHz);
 
+    // Decaying max-hold overlay per bin, styled after deskHPSDR's Display
+    // menu "Peak Blobs & Hold" (Decay hold time/Drop dBm/s) - see
+    // SettingsDialog's Display tab. Off by default. A bin's peak stays put
+    // for holdTimeSec after last being topped up, then falls at
+    // dropDbPerSec until either overtaken by a fresh reading or it decays
+    // below the current dB floor.
+    void setPeakHoldEnabled(bool enabled);
+    void setPeakHoldParams(double holdTimeSec, double dropDbPerSec);
+
 signals:
     // Emitted on a left click inside the plot area, converted from pixel
     // position to frequency using the same loHz/hiHz mapping paintEvent()
@@ -51,6 +61,18 @@ private:
     void rebuildGridCache(const QRect &full, const QRect &plot);
 
     QVector<float> m_spectrum;
+
+    // Peak-hold state - see setPeakHoldEnabled()/setPeakHoldParams().
+    // m_peakHold/m_peakHoldAgeMs are resized (and reset) whenever the
+    // incoming spectrum's bin count changes (e.g. a zoom change), since
+    // per-bin state stops being meaningful across a different crop.
+    bool m_peakHoldEnabled = false;
+    double m_peakHoldTimeSec = 2.5;
+    double m_peakHoldDropDbPerSec = 6.0;
+    QVector<float> m_peakHold;
+    QVector<qint64> m_peakHoldAgeMs;
+    QElapsedTimer m_peakHoldClock;
+
     double m_centerHz = 7100000.0;
     double m_sampleRateHz = 48000.0;
     float m_minDb = -140.0f;

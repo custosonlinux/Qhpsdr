@@ -15,7 +15,6 @@ constexpr quint16 kReceiveSpecificPort = 1025;  // receive-specific packet, host
 constexpr quint16 kHighPriorityPort = 1027;     // high-priority packet, host -> radio
 constexpr quint16 kRxIqBasePort = 1035;         // radio -> host, +ddc index (source port)
 constexpr quint16 kWidebandPort = 1027;         // radio -> host, wideband spectrum (source port)
-constexpr int kMaxDdc = 4;
 
 constexpr int kGeneralPacketSize = 60;
 constexpr int kReceiveSpecificPacketSize = 1444;
@@ -259,12 +258,23 @@ void NewProtocolConnection::sendReceiveSpecificPacket() {
     std::array<uchar, kReceiveSpecificPacketSize> buf{};
     putU32BE(buf.data(), m_receiveSpecificSequence++);
     buf[4] = 1;    // number of ADCs
+    buf[5] = m_adcDither ? 0x01 : 0x00; // ADC0 dither bit
+    buf[6] = m_adcRandom ? 0x01 : 0x00; // ADC0 random bit
     buf[7] = 0x01; // DDC0 enable bit
     // DDC0: buf[17 + ddc*6] = adc index, buf[18..19 + ddc*6] = sample rate
     // in kHz (big-endian), buf[22 + ddc*6] = bits per sample.
     buf[17] = 0; // ADC0
-    putU16BE(&buf[18], 48); // 48kHz - matches RxAudioChannel's fixed 48kHz input
+    putU16BE(&buf[18], quint16(m_rxSampleRateHz / 1000));
     buf[22] = 24;
+    if (m_rx2Enabled) {
+        // DDC1 - same physical ADC0 (see RadioConnection::setRx2Enabled()'s
+        // doc comment: a single-ADC Hermes legitimately feeds two
+        // independently-tuned DDCs from the one ADC).
+        buf[7] |= 0x02; // DDC1 enable bit
+        buf[23] = 0;    // ADC0
+        putU16BE(&buf[24], quint16(m_rx2SampleRateHz / 1000));
+        buf[28] = 24;
+    }
     m_socket->writeDatagram(reinterpret_cast<const char *>(buf.data()), qint64(buf.size()), m_deviceAddress,
                              kReceiveSpecificPort);
 }
@@ -275,6 +285,10 @@ void NewProtocolConnection::sendHighPriorityPacket() {
     buf[4] = 0x01; // run bit (bit 0) - MOX (bit 1) stays 0, no TX support yet
     const quint32 phase = quint32(double(m_rxFrequencyHz) * kPhaseWordPerHz);
     putU32BE(&buf[9], phase); // DDC0 frequency word
+    if (m_rx2Enabled) {
+        const quint32 phase2 = quint32(double(m_rx2FrequencyHz) * kPhaseWordPerHz);
+        putU32BE(&buf[13], phase2); // DDC1 frequency word
+    }
     if (m_filterBoardEnabled) {
         // ALEX0 at bytes 1432-1435 (new_protocol.c:
         // high_priority_buffer_to_radio[1432..1435]) - only meaningful if
@@ -310,8 +324,10 @@ void NewProtocolConnection::readPendingDatagrams() {
         // per stream (high-priority-to-host, mic, and one per DDC), all
         // sent to the same host address+port registered by the general
         // packet - see the class comment.
-        if (senderPort >= kRxIqBasePort && senderPort < kRxIqBasePort + kMaxDdc) {
+        if (senderPort == kRxIqBasePort) {
             parseRxIqPacket(reinterpret_cast<const uchar *>(buffer.constData()), buffer.size());
+        } else if (senderPort == kRxIqBasePort + 1 && m_rx2Enabled) {
+            parseRxIqPacket2(reinterpret_cast<const uchar *>(buffer.constData()), buffer.size());
         } else if (senderPort == kWidebandPort && m_widebandEnabled) {
             parseWidebandPacket(reinterpret_cast<const uchar *>(buffer.constData()), buffer.size());
         }
@@ -341,6 +357,31 @@ void NewProtocolConnection::parseRxIqPacket(const uchar *data, int length) {
         ++m_samplesReceived;
     }
     emit iqSamplesReady(iq);
+}
+
+void NewProtocolConnection::parseRxIqPacket2(const uchar *data, int length) {
+    // DDC1's stream - byte-for-byte identical framing to DDC0's (deskHPSDR
+    // parses every DDC's RX IQ packet with the same process_iq_data(), no
+    // per-DDC format differences), just demuxed by source port and emitted
+    // on the second signal instead. See parseRxIqPacket() for field notes.
+    if (length != kRxIqPacketSize) {
+        return;
+    }
+    const int sampleCount = qMin(int(data[15]), kRxIqSamplesPerPacket);
+    ++m_packetsReceived;
+
+    constexpr double kScale = 1.0 / 8388608.0;
+    QVector<double> iq;
+    iq.reserve(sampleCount * 2);
+    const uchar *p = data + 16;
+    for (int i = 0; i < sampleCount; ++i, p += 6) {
+        const qint32 iSample = get24BESigned(p);
+        const qint32 qSample = get24BESigned(p + 3);
+        iq.append(double(iSample) * kScale);
+        iq.append(double(qSample) * kScale);
+        ++m_samplesReceived;
+    }
+    emit iqSamplesReady2(iq);
 }
 
 void NewProtocolConnection::parseWidebandPacket(const uchar *data, int length) {

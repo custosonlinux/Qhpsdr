@@ -2,34 +2,19 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QMap>
 #include <QVector>
 
 struct DiscoveredDevice;
 class RadioConnection;
-class RxAudioChannel;
-class SpectrumAnalyzer;
-class VfoPanel;
-class PanadapterWidget;
-class WaterfallWidget;
-class ToolbarWidget;
+class ReceiverPanel;
+class WidebandPanel;
+class SettingsDialog;
+class AnalogMeterWidget;
 class QAction;
 class QAudioSink;
+class QDockWidget;
 class QIODevice;
 class QThread;
-class QTimer;
-
-// A single-entry-per-band "band stack" (deskHPSDR's band_menu.c/
-// bandstack_menu.c has several stored frequency/mode slots per band,
-// cycled by repeatedly clicking the same band - simplified here to just
-// the last-used one). mode/filterIndex stored as plain int (not RxMode)
-// to avoid pulling rxaudio.h into this header for a forward-declared
-// class's private state.
-struct BandStackEntry {
-    double frequencyHz = 0.0;
-    int mode = 0;
-    int filterIndex = 0;
-};
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -41,6 +26,10 @@ public:
 private slots:
     void showDiscoveryDialog();
     void disconnectFromRadio();
+    // Creates m_settingsDialog on first call, shows/raises it on later
+    // ones - non-modal and kept alive for the app's whole lifetime rather
+    // than recreated each time, so it remembers its own position/tab.
+    void showSettingsDialog();
 
 private:
     // Tears down any existing connection and sets up a fresh one to
@@ -49,73 +38,54 @@ private:
     // modal dialog (e.g. for testing against hpsdrsim without a GUI click).
     void connectToDevice(const DiscoveredDevice &device);
 
-    // Runs on m_workerThread (writes to QAudioSink, which can block).
-    void playAudioBlock(const QVector<float> &interleavedStereo);
-    void repaintDisplays();
-    // Shared by every way the tuned frequency can change (typed, wheel,
-    // panadapter click, band button): updates the VFO display, pushes the
-    // new frequency to the radio, and keeps the panadapter and toolbar's
-    // band combo in sync.
-    void retuneTo(double hz);
-    // Persists/restores frequency, mode, filter, step, attenuation, AF/RF
-    // gain, zoom, AGC/noise-blanker and the band stack across restarts
-    // (QSettings, org/app "Qhpsdr" - see main.cpp). loadSettings() runs
-    // once at startup before any device connection; saveSettings() runs
-    // from the destructor.
+    // Runs on m_workerThread (writes to QAudioSink, which can block). Mixes
+    // RX1/RX2's own audioBlockReady blocks (simple additive mix, clamped)
+    // before the single shared QAudioSink write - see m_rx1Block/m_rx2Block.
+    void mixAndPlayAudio();
+    // Persists/restores each receiver's own settings (ReceiverPanel::save/
+    // loadSettings()), the shared DevicePanel's settings, whether RX2 is
+    // enabled, and the dock layout (QMainWindow::saveState()/restoreState()).
+    // loadSettings() runs once at startup before any device connection;
+    // saveSettings() runs from the destructor.
     void saveSettings();
     void loadSettings();
-    // Captures the current frequency/mode/filter into m_bandStack, keyed
-    // by whichever band (ToolbarWidget::bandIndexForFrequency()) the
-    // current frequency falls in - a no-op outside all listed bands.
-    // Called after every frequency/mode/filter change (matches
-    // deskHPSDR's vfo_save_bandstack(): implicit, continuous, not tied to
-    // an explicit save action) so switching back to a band later recalls
-    // exactly where it was left, not just the band's center frequency.
-    void updateBandStack();
 
     // m_connection (OldProtocolConnection or NewProtocolConnection,
     // depending on the connected device's protocol - see connectToDevice())
-    // + RxAudioChannel (network I/O and WDSP audio demod) live on
-    // m_workerThread; SpectrumAnalyzer (the panadapter's FFT) lives on its
-    // own m_spectrumThread. They're independent - both just consume the
-    // same raw I/Q stream, neither depends on the other's output - so they
-    // get separate threads/cores rather than sharing one, instead of
-    // leaving cores idle. Only thin signal emissions cross back to the GUI
-    // thread for actual widget updates.
+    // lives on m_workerThread, along with both receivers' RxAudioChannel
+    // (WDSP audio demod) - see ReceiverPanel::startAudio(). Each
+    // ReceiverPanel's SpectrumAnalyzer (panadapter FFT) lives on its own
+    // dedicated thread instead (see ReceiverPanel's class comment) - both
+    // are independent consumers of the same raw I/Q stream, so they get
+    // separate cores rather than sharing one.
     QThread *m_workerThread = nullptr;
-    QThread *m_spectrumThread = nullptr;
     RadioConnection *m_connection = nullptr;
-    RxAudioChannel *m_rxAudio = nullptr;
-    SpectrumAnalyzer *m_spectrum = nullptr;
     QAudioSink *m_audioSink = nullptr;
     QIODevice *m_audioDevice = nullptr;
     QAction *m_disconnectAction = nullptr;
-    VfoPanel *m_vfoPanel = nullptr;
-    PanadapterWidget *m_panadapter = nullptr;
-    WaterfallWidget *m_waterfall = nullptr;
-    ToolbarWidget *m_toolbar = nullptr;
+    QAction *m_rx2EnabledAction = nullptr;
 
-    // Panadapter/waterfall repainting is decoupled from the ~23/s rate
-    // spectrum frames actually arrive at: painting synchronously on every
-    // frame made each incoming frame's handler expensive enough (grid +
-    // trace + image-scroll + widget repaint) to noticeably starve the GUI
-    // event loop. m_repaintTimer instead pulls whatever's latest in
-    // m_latestSpectrum at a fixed, bounded rate.
-    QTimer *m_repaintTimer = nullptr;
-    QVector<float> m_latestSpectrum;
-    bool m_spectrumDirty = false;
-    float m_dbFloor = -120.0f;
-    float m_dbCeil = -40.0f;
-    // Waterfall color-mapping range - deliberately separate from
-    // m_dbFloor/m_dbCeil above (the panadapter's axis range): see
-    // repaintDisplays(), anchored to the noise floor rather than raw
-    // min/max so background noise renders as blue/black.
-    float m_waterfallFloor = -120.0f;
-    float m_waterfallCeil = -90.0f;
+    ReceiverPanel *m_rx1 = nullptr;
+    ReceiverPanel *m_rx2 = nullptr;
+    WidebandPanel *m_wideband = nullptr;
+    SettingsDialog *m_settingsDialog = nullptr;
 
-    // Keyed by ToolbarWidget::bandIndexForFrequency() - see
-    // updateBandStack(). Persisted via save/loadSettings().
-    QMap<int, BandStackEntry> m_bandStack;
+    // Analog S-meter - deliberately its OWN floating dock per receiver,
+    // not embedded in VfoPanel (an earlier attempt at that rendered badly
+    // in VfoPanel's cramped, wide-but-short meter row - see
+    // AnalogMeterWidget's own comment on the geometry bug that caused).
+    // Hidden by default, shown/hidden together via SettingsDialog's Meter
+    // tab toggle.
+    AnalogMeterWidget *m_rx1MeterWidget = nullptr;
+    AnalogMeterWidget *m_rx2MeterWidget = nullptr;
+    QDockWidget *m_rx1MeterDock = nullptr;
+    QDockWidget *m_rx2MeterDock = nullptr;
+
+    // Latest block from each receiver, mixed together in mixAndPlayAudio()
+    // whenever both are present - RX2 stays silent (block never updated)
+    // while disabled/not open.
+    QVector<float> m_rx1Block;
+    QVector<float> m_rx2Block;
 };
 
 #endif // MAINWINDOW_H

@@ -10,7 +10,6 @@ class QLineEdit;
 class QComboBox;
 class QProgressBar;
 class QLabel;
-class QSpinBox;
 class FrequencyLineEdit;
 
 // Minimal VFO panel: frequency readout/entry, mode + tuning-step + filter
@@ -52,7 +51,6 @@ public:
     void setFilterIndex(int index);
     int currentStepIndex() const;
     void setStepIndex(int index);
-    void setAttenuationDb(int db);
 
     // WDSP's own S-meter reading in dBm (RxAudioChannel::meterUpdated()).
     // Converted to S-units the same way as deskHPSDR's meter.c: S9 =
@@ -60,10 +58,9 @@ public:
     // path yet), 6dB/S-unit below S9, direct dB-over-S9 above it.
     void setSignalDbm(double dbm);
 
-    // Current ADC0 step attenuator setting (0-31 dB) - added to the raw
-    // dBFS meter reading before display so increasing attenuation doesn't
-    // make the meter falsely show a weaker signal (see setSignalDbm()).
-    int attenuationDb() const;
+    // dBm value considered "S9" (HF convention default -73dBm) - see
+    // SettingsDialog's Meter tab calibration field.
+    void setS9Dbm(double dbm);
 
     // Band/noise-blanker labels for the summary line above the frequency
     // LCD (see updateInfoLabel()) - VfoPanel doesn't own either piece of
@@ -80,7 +77,6 @@ signals:
     void frequencyEditedHz(double hz);
     void modeSelected(RxMode mode);
     void filterSelected(double lowHz, double highHz);
-    void attenuationChanged(int db);
 
 protected:
     void wheelEvent(QWheelEvent *event) override;
@@ -111,9 +107,10 @@ private:
     QComboBox *m_modeCombo = nullptr;
     QComboBox *m_stepCombo = nullptr;
     QComboBox *m_filterCombo = nullptr;
-    QSpinBox *m_attenSpin = nullptr;
     QProgressBar *m_meter = nullptr;
     QLabel *m_meterLabel = nullptr;
+    double m_s9Dbm = -73.0;
+    double m_lastDbm = -140.0;
 
     double m_frequencyHz = 7100000.0;
     // Actual initial value is set in the constructor from

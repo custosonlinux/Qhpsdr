@@ -83,6 +83,37 @@ public:
     // clock, giving a 61.44MHz Nyquist span - kWidebandSampleRateHz).
     void setWidebandEnabled(bool enabled) override { m_widebandEnabled = enabled; }
 
+    // Second, independently-tuned DDC sharing the same physical ADC0 - see
+    // RadioConnection::setRx2Enabled()'s doc comment for the byte offsets
+    // this drives in sendReceiveSpecificPacket()/sendHighPriorityPacket().
+    // Off by default: no DDC1 enable bit is sent and no traffic is expected
+    // on port kRxIqBasePort+1 until this is turned on.
+    void setRx2Enabled(bool enabled) override { m_rx2Enabled = enabled; }
+    void setRxFrequency2(double hz) override { m_rx2FrequencyHz = hz; }
+    double rxFrequency2() const override { return m_rx2FrequencyHz; }
+
+    // Per-DDC sample rate in Hz - see RadioConnection::setRxSampleRate()'s
+    // doc comment. Written into the receive-specific packet's per-DDC
+    // rate field (bytes 18-19/24-25, BE16 in kHz) every resend, so a
+    // mid-session change takes effect within one periodic-timer cycle
+    // (200ms) without needing a fresh connectToDevice() call - but the
+    // *host* side (RxAudioChannel's WDSP input rate) still needs an
+    // explicit reopen, since WDSP bakes that in at OpenChannel() time -
+    // see ReceiverPanel.
+    void setRxSampleRate(int hz) override { m_rxSampleRateHz = hz; }
+    int rxSampleRate() const override { return m_rxSampleRateHz; }
+    void setRxSampleRate2(int hz) override { m_rx2SampleRateHz = hz; }
+    int rxSampleRate2() const override { return m_rx2SampleRateHz; }
+
+    // ADC0 dither/random-bit generators - written into the receive-
+    // specific packet's byte 5 (dither)/byte 6 (random), bit 0 for ADC0
+    // (this class's only ADC) - see RadioConnection::setAdcDither()'s
+    // doc comment.
+    void setAdcDither(bool enabled) override { m_adcDither = enabled; }
+    bool adcDither() const override { return m_adcDither; }
+    void setAdcRandom(bool enabled) override { m_adcRandom = enabled; }
+    bool adcRandom() const override { return m_adcRandom; }
+
 private slots:
     void readPendingDatagrams();
     void sendPeriodicPackets();
@@ -93,6 +124,7 @@ private:
     void sendReceiveSpecificPacket();
     void sendHighPriorityPacket();
     void parseRxIqPacket(const uchar *data, int length);
+    void parseRxIqPacket2(const uchar *data, int length);
     void parseWidebandPacket(const uchar *data, int length);
 
     QUdpSocket *m_socket = nullptr;
@@ -103,11 +135,17 @@ private:
     bool m_connected = false;
     bool m_filterBoardEnabled = false;
     bool m_widebandEnabled = false;
+    bool m_rx2Enabled = false;
 
     quint32 m_generalSequence = 0;
     quint32 m_receiveSpecificSequence = 0;
     quint32 m_highPrioritySequence = 0;
     double m_rxFrequencyHz = 7100000.0;
+    double m_rx2FrequencyHz = 7100000.0;
+    int m_rxSampleRateHz = 48000;
+    int m_rx2SampleRateHz = 48000;
+    bool m_adcDither = false;
+    bool m_adcRandom = false;
 
     quint64 m_packetsReceived = 0;
     quint64 m_samplesReceived = 0;

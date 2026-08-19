@@ -58,6 +58,45 @@ public:
     // confirmation, most likely the dB scaling in particular.
     virtual void setWidebandEnabled(bool enabled) = 0;
 
+    // Second, independently-tuned receiver (DDC1) - Protocol 2 only
+    // (OldProtocolConnection no-ops these, same pattern as
+    // setFilterBoardEnabled()/setWidebandEnabled() above). A plain
+    // single-ADC Hermes fully supports two independently-tuned DDCs
+    // reading the same physical ADC - see NewProtocolConnection's
+    // implementation for the confirmed wire-format details. Starts
+    // disabled: no DDC1 traffic is requested, and iqSamplesReady2() never
+    // fires, until this is turned on.
+    virtual void setRx2Enabled(bool enabled) = 0;
+    virtual void setRxFrequency2(double hz) = 0;
+    virtual double rxFrequency2() const = 0;
+
+    // Per-DDC sample rate in Hz (48000/96000/192000/384000/768000/
+    // 1536000 on a Hermes-class board) - each DDC has its own independent
+    // decimator, so RX1/RX2 can legitimately run at different rates
+    // simultaneously off the same physical ADC. Protocol 1
+    // (OldProtocolConnection) is a no-op for now - fixed at 48kHz, same
+    // as setAttenuation()'s "not wired up yet" precedent. Protocol 2
+    // sends the chosen rate in the receive-specific packet's per-DDC
+    // sample-rate field - see NewProtocolConnection.
+    virtual void setRxSampleRate(int hz) = 0;
+    virtual int rxSampleRate() const = 0;
+    virtual void setRxSampleRate2(int hz) = 0;
+    virtual int rxSampleRate2() const = 0;
+
+    // ADC0 dither/random-bit generators - real Protocol 2 receive-specific
+    // packet fields (bytes 5/6, one bit per ADC index) that this class
+    // previously left at zero. Dither reduces quantization distortion at
+    // low signal levels at the cost of a slightly higher noise floor;
+    // random adds a dithering PRBS to further decorrelate quantization
+    // error - both are standard ADC linearization techniques, off by
+    // default to match this project's previous (implicit) behavior.
+    // Shared across both DDCs (one physical ADC0) - Protocol 1 is a no-op,
+    // same "not wired up yet" precedent as setAttenuation().
+    virtual void setAdcDither(bool enabled) = 0;
+    virtual bool adcDither() const = 0;
+    virtual void setAdcRandom(bool enabled) = 0;
+    virtual bool adcRandom() const = 0;
+
 signals:
     void connected();
     void disconnected();
@@ -75,6 +114,10 @@ signals:
     // not centered like the DDC panadapter's complex-baseband view) - see
     // setWidebandEnabled(). Never emitted by OldProtocolConnection.
     void wideSpectrumReady(QVector<float> magnitudesDb, double sampleRateHz);
+
+    // DDC1's own I/Q stream - see setRx2Enabled(). Never emitted by
+    // OldProtocolConnection or while RX2 is disabled.
+    void iqSamplesReady2(QVector<double> interleavedIQ);
 };
 
 #endif // QHPSDR_RADIOCONNECTION_H

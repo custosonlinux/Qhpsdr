@@ -14,7 +14,6 @@
 #include <QMouseEvent>
 #include <QPalette>
 #include <QProgressBar>
-#include <QSpinBox>
 #include <QStringList>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -262,15 +261,6 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     connect(m_filterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &VfoPanel::onFilterComboChanged);
 
-    m_attenSpin = new QSpinBox(this);
-    m_attenSpin->setRange(0, 31);
-    m_attenSpin->setSuffix(tr(" dB"));
-    m_attenSpin->setStyleSheet(kComboStyle);
-    m_attenSpin->setToolTip(
-        tr("ADC0 step attenuator - raise this if the S-meter is pinned regardless of frequency "
-           "(front-end/ADC overload)."));
-    connect(m_attenSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &VfoPanel::attenuationChanged);
-
     m_meterLabel = new QLabel(tr("Signal"), this);
     m_meterLabel->setStyleSheet(kDarkLabelStyle);
     m_meter = new QProgressBar(this);
@@ -294,8 +284,6 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     stepLabel->setStyleSheet(kDarkLabelStyle);
     auto *filterLabel = new QLabel(tr("Filter"), this);
     filterLabel->setStyleSheet(kDarkLabelStyle);
-    auto *attenLabel = new QLabel(tr("Atten"), this);
-    attenLabel->setStyleSheet(kDarkLabelStyle);
 
     auto *grid = new QGridLayout;
     grid->setVerticalSpacing(0);
@@ -308,10 +296,8 @@ VfoPanel::VfoPanel(QWidget *parent) : QWidget(parent) {
     grid->addWidget(m_stepCombo, 3, 3);
     grid->addWidget(filterLabel, 3, 4);
     grid->addWidget(m_filterCombo, 3, 5);
-    grid->addWidget(attenLabel, 3, 6);
-    grid->addWidget(m_attenSpin, 3, 7);
     grid->addWidget(m_meterLabel, 4, 0);
-    grid->addWidget(m_meter, 4, 1, 1, 7);
+    grid->addWidget(m_meter, 4, 1, 1, 5);
 
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(grid);
@@ -392,8 +378,6 @@ void VfoPanel::repopulateFilterCombo() {
     updateInfoLabel();
 }
 
-int VfoPanel::attenuationDb() const { return m_attenSpin ? m_attenSpin->value() : 0; }
-
 FilterEntry VfoPanel::currentFilter() const {
     const auto filters = filtersForMode(m_mode);
     const int idx = m_filterCombo->currentIndex();
@@ -420,21 +404,25 @@ void VfoPanel::setStepIndex(int index) {
     }
 }
 
-void VfoPanel::setAttenuationDb(int db) { m_attenSpin->setValue(db); }
-
 void VfoPanel::setSignalDbm(double dbm) {
-    // core/deskhpsdr-src/meter.c: S9 = -73dBm (HF), 6dB per S-unit below
-    // S9, direct dB-over-S9 above it (e.g. "S9+20").
-    constexpr double kS9Dbm = -73.0;
+    m_lastDbm = dbm;
+    // core/deskhpsdr-src/meter.c: S9 = -73dBm by default (HF), 6dB per
+    // S-unit below S9, direct dB-over-S9 above it (e.g. "S9+20") - see
+    // setS9Dbm() for the calibration override.
     QString text;
-    if (dbm <= kS9Dbm) {
-        const double sUnits = qMax(0.0, 9.0 + (dbm - kS9Dbm) / 6.0);
+    if (dbm <= m_s9Dbm) {
+        const double sUnits = qMax(0.0, 9.0 + (dbm - m_s9Dbm) / 6.0);
         text = QStringLiteral("S%1").arg(int(sUnits));
     } else {
-        text = QStringLiteral("S9+%1").arg(int(dbm - kS9Dbm));
+        text = QStringLiteral("S9+%1").arg(int(dbm - m_s9Dbm));
     }
     m_meter->setFormat(text + tr("  (%1 dBm)").arg(int(dbm)));
     m_meter->setValue(int(qBound(-1270.0, dbm * 10.0, -130.0)));
+}
+
+void VfoPanel::setS9Dbm(double dbm) {
+    m_s9Dbm = dbm;
+    setSignalDbm(m_lastDbm);
 }
 
 void VfoPanel::setBandLabel(const QString &label) {
@@ -471,7 +459,6 @@ void VfoPanel::setConnected(bool connected) {
     m_modeCombo->setEnabled(connected);
     m_stepCombo->setEnabled(connected);
     m_filterCombo->setEnabled(connected);
-    m_attenSpin->setEnabled(connected);
 }
 
 void VfoPanel::onFrequencyEditingFinished() {

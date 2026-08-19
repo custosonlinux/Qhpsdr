@@ -97,22 +97,18 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
         emit afGainChanged(double(value));
     });
 
-    auto *rfLabel = new QLabel(tr("RF Gain"), this);
-    rfLabel->setStyleSheet(kDarkLabelStyle);
-    m_rfGainSlider = new QSlider(Qt::Horizontal, this);
-    m_rfGainSlider->setStyleSheet(kSliderStyle);
-    m_rfGainSlider->setRange(-20, 20);
-    m_rfGainSlider->setValue(0);
-    m_rfGainValueLabel = new QLabel(tr("0 dB"), this);
-    m_rfGainValueLabel->setStyleSheet(kDarkLabelStyle);
-    m_rfGainValueLabel->setMinimumWidth(48);
-    m_rfGainSlider->setToolTip(
-        tr("S-meter calibration offset - not a hardware gain control (core/deskhpsdr-src/radio.c's "
-           "adc[0].gain is a pure calibration constant for standard boards). Adjust until the meter "
-           "matches a known reference signal."));
-    connect(m_rfGainSlider, &QSlider::valueChanged, this, [this](int value) {
-        m_rfGainValueLabel->setText(tr("%1 dB").arg(value));
-    });
+    auto *rateLabel = new QLabel(tr("Rate"), this);
+    rateLabel->setStyleSheet(kDarkLabelStyle);
+    m_rateCombo = new QComboBox(this);
+    m_rateCombo->setStyleSheet(kComboStyle);
+    for (int hz : {48000, 96000, 192000, 384000, 768000, 1536000}) {
+        m_rateCombo->addItem(tr("%1k").arg(hz / 1000), hz);
+    }
+    m_rateCombo->setToolTip(
+        tr("This receiver's own DDC sample rate - independent per receiver, Protocol 2 only "
+           "(no effect over Protocol 1). Changing this briefly interrupts audio while WDSP reopens."));
+    connect(m_rateCombo, QOverload<int>::of(&QComboBox::activated), this,
+            [this](int index) { emit sampleRateChanged(m_rateCombo->itemData(index).toInt()); });
 
     auto *zoomLabel = new QLabel(tr("Zoom"), this);
     zoomLabel->setStyleSheet(kDarkLabelStyle);
@@ -218,23 +214,6 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
         emit nr4SmoothingChanged(double(value));
     });
 
-    m_filterBoardButton = new QPushButton(tr("Filter Board"), this);
-    m_filterBoardButton->setCheckable(true);
-    m_filterBoardButton->setStyleSheet(kToggleButtonStyle);
-    m_filterBoardButton->setToolTip(
-        tr("Auto-switch an Alex/Apollo-compatible RX filter board by tuned frequency. Only take effect "
-           "over Protocol 2 - Protocol 1 radios switch filters in firmware without this. Leave off unless "
-           "a filter board is actually connected."));
-    connect(m_filterBoardButton, &QPushButton::toggled, this, &ToolbarWidget::filterBoardEnabledChanged);
-
-    m_widebandButton = new QPushButton(tr("Wideband"), this);
-    m_widebandButton->setCheckable(true);
-    m_widebandButton->setStyleSheet(kToggleButtonStyle);
-    m_widebandButton->setToolTip(
-        tr("Full-band ADC spectrum sweep instead of the tuned DDC's own zoomed view. Protocol 2 only - "
-           "wire format is unverified against any working reference, needs real-hardware confirmation."));
-    connect(m_widebandButton, &QPushButton::toggled, this, &ToolbarWidget::widebandEnabledChanged);
-
     auto *layout = new QHBoxLayout(this);
     layout->addWidget(bandLabel);
     layout->addWidget(m_bandCombo);
@@ -243,9 +222,8 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     layout->addWidget(m_afGainSlider, /*stretch=*/1);
     layout->addWidget(m_afGainValueLabel);
     layout->addSpacing(16);
-    layout->addWidget(rfLabel);
-    layout->addWidget(m_rfGainSlider, /*stretch=*/1);
-    layout->addWidget(m_rfGainValueLabel);
+    layout->addWidget(rateLabel);
+    layout->addWidget(m_rateCombo);
     layout->addSpacing(16);
     layout->addWidget(zoomLabel);
     layout->addWidget(m_zoomCombo);
@@ -269,19 +247,8 @@ ToolbarWidget::ToolbarWidget(QWidget *parent) : QWidget(parent) {
     layout->addWidget(nr4SmoothLabel);
     layout->addWidget(m_nr4SmoothSlider, /*stretch=*/1);
     layout->addWidget(m_nr4SmoothValueLabel);
-    layout->addSpacing(16);
-    layout->addWidget(m_filterBoardButton);
-    layout->addWidget(m_widebandButton);
 
     setConnected(false);
-}
-
-double ToolbarWidget::rfGainDb() const { return m_rfGainSlider ? double(m_rfGainSlider->value()) : 0.0; }
-
-void ToolbarWidget::setRfGainDb(double dB) {
-    if (m_rfGainSlider) {
-        m_rfGainSlider->setValue(int(dB));
-    }
 }
 
 double ToolbarWidget::afGainDb() const { return m_afGainSlider ? double(m_afGainSlider->value()) : 0.0; }
@@ -289,6 +256,22 @@ double ToolbarWidget::afGainDb() const { return m_afGainSlider ? double(m_afGain
 void ToolbarWidget::setAfGainDb(double dB) {
     if (m_afGainSlider) {
         m_afGainSlider->setValue(int(dB));
+    }
+}
+
+int ToolbarWidget::sampleRateHz() const {
+    return m_rateCombo ? m_rateCombo->currentData().toInt() : 48000;
+}
+
+void ToolbarWidget::setSampleRateHz(int hz) {
+    if (!m_rateCombo) {
+        return;
+    }
+    for (int i = 0; i < m_rateCombo->count(); ++i) {
+        if (m_rateCombo->itemData(i).toInt() == hz) {
+            m_rateCombo->setCurrentIndex(i);
+            return;
+        }
     }
 }
 
@@ -358,7 +341,6 @@ void ToolbarWidget::setFrequencyHz(double hz) {
 void ToolbarWidget::setConnected(bool connected) {
     m_bandCombo->setEnabled(connected);
     m_afGainSlider->setEnabled(connected);
-    m_rfGainSlider->setEnabled(connected);
     m_agcCombo->setEnabled(connected);
     m_agcTopSlider->setEnabled(connected);
     m_nbCombo->setEnabled(connected);
@@ -366,8 +348,6 @@ void ToolbarWidget::setConnected(bool connected) {
     m_anfButton->setEnabled(connected);
     m_snbButton->setEnabled(connected);
     m_nr4SmoothSlider->setEnabled(connected);
-    m_filterBoardButton->setEnabled(connected);
-    m_widebandButton->setEnabled(connected);
 }
 
 AgcMode ToolbarWidget::agcMode() const { return m_agcCombo ? AgcMode(m_agcCombo->currentIndex()) : AgcMode::Medium; }
@@ -429,23 +409,5 @@ double ToolbarWidget::nr4SmoothingFactor() const {
 void ToolbarWidget::setNr4SmoothingFactor(double percent) {
     if (m_nr4SmoothSlider) {
         m_nr4SmoothSlider->setValue(int(percent));
-    }
-}
-
-bool ToolbarWidget::filterBoardEnabled() const {
-    return m_filterBoardButton && m_filterBoardButton->isChecked();
-}
-
-void ToolbarWidget::setFilterBoardEnabled(bool enabled) {
-    if (m_filterBoardButton) {
-        m_filterBoardButton->setChecked(enabled);
-    }
-}
-
-bool ToolbarWidget::widebandEnabled() const { return m_widebandButton && m_widebandButton->isChecked(); }
-
-void ToolbarWidget::setWidebandEnabled(bool enabled) {
-    if (m_widebandButton) {
-        m_widebandButton->setChecked(enabled);
     }
 }
